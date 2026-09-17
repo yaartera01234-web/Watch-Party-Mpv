@@ -577,19 +577,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const togglePiP = async () => {
+    // Native Android Picture-in-Picture via embedded bridge
+    if (typeof (window as any).AndroidMpvBridge?.enterPiP === 'function') {
+      (window as any).AndroidMpvBridge.enterPiP();
+      triggerOsd('[mpv] Native Picture-in-Picture');
+      return;
+    }
+
+    // Web picture-in-picture
     if (videoRef.current && document.pictureInPictureEnabled) {
       try {
         if (document.pictureInPictureElement) {
           await document.exitPictureInPicture();
+          triggerOsd('[mpv] Windowed Mode');
         } else {
           await videoRef.current.requestPictureInPicture();
           triggerOsd('[mpv] Picture-in-Picture');
         }
       } catch {
-        // PiP not allowed
+        triggerOsd('[mpv] PiP unavailable for this stream');
       }
     }
   };
+
+  // Sync playback state with native Android background engine
+  useEffect(() => {
+    try {
+      if (typeof (window as any).AndroidMpvBridge?.setPlayingState === 'function') {
+        (window as any).AndroidMpvBridge.setPlayingState(isPlaying);
+      }
+    } catch {
+      // ignore
+    }
+  }, [isPlaying]);
 
   // MPV Frame Capture / Screenshot Tool
   const handleTakeScreenshot = useCallback(() => {
@@ -997,6 +1017,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="text-[11px]">Controls</span>
             </button>
 
+            {/* Native Picture-in-Picture Quick Button */}
+            <button
+              id="internal-mpv-pip-btn"
+              onClick={togglePiP}
+              className="px-2 py-1 rounded-lg bg-pink-600/80 hover:bg-pink-500 text-white border border-pink-400/40 text-xs font-semibold backdrop-blur-md shadow flex items-center gap-1 transition-all"
+              title="Native Picture-in-Picture (Play in floating mini-player)"
+            >
+              <PictureInPicture className="w-3 h-3 text-pink-200" />
+              <span className="text-[11px] font-bold">PiP Mode</span>
+            </button>
+
             {/* Room Sync */}
             <button
               id="quick-sync-btn"
@@ -1332,7 +1363,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </button>
 
               {/* Picture-in-Picture */}
-              {document.pictureInPictureEnabled && (
+              {(document.pictureInPictureEnabled || typeof (window as any).AndroidMpvBridge !== 'undefined') && (
                 <button
                   id="osd-pip-btn"
                   onClick={togglePiP}

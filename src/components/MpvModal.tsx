@@ -489,6 +489,48 @@ export const MpvModal: React.FC<MpvModalProps> = ({
                   syncplay --host syncplay.pl:8995 --room {roomName}
                 </div>
               </div>
+
+              {/* Built-in Embedded MPV Engine (Syncplay Mobile Architecture) */}
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-purple-950/40 via-indigo-950/40 to-pink-950/40 border border-purple-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-2">
+                    <Tv className="w-4 h-4 text-pink-400" />
+                    Built-in MPV Player Engine (In-App)
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Integrated
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-neutral-300 leading-relaxed">
+                  Is app ke andar <strong className="text-white">Full In-App MPV Media Engine</strong> pehle se installed hai — kisi bhi external app ya alag player ki zaroorat nahi hai:
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="p-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                    <span className="text-neutral-200">Zero-latency Syncplay protocol</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                    <span className="text-neutral-200">Native Picture-in-Picture (PiP)</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                    <span className="text-neutral-200">Background Audio on screen off</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                    <span className="text-neutral-200">HLS (m3u8), MP4, MKV, WebM, DASH</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-black/40 border border-white/10 text-[11px] text-neutral-300 flex items-center justify-between">
+                  <span className="text-neutral-400">Sync Engine Status:</span>
+                  <span className="text-emerald-400 font-mono font-semibold">Active &bull; Room "{roomName}"</span>
+                </div>
+              </div>
             </div>
           )}
 

@@ -19,19 +19,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Set up JDK 17
+      - name: Set up Java 21 (Required by Capacitor 8)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android Platform 36 & Accept Licenses
+      - name: Accept Android SDK Licenses & Ensure API 35
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platforms;android-35" "build-tools;35.0.0" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" || true
 
       - name: Install NPM Dependencies
         run: |
