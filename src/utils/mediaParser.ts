@@ -6,40 +6,70 @@ export function parseMediaUrl(url: string): { type: MediaType; videoId?: string;
     return { type: 'none', cleanUrl: '' };
   }
 
-  // Strip enclosing quotes, markdown, or angle brackets that can be copied on mobile
+  // Strip enclosing quotes, markdown formatting, or angle brackets that can be copied on mobile
   trimmed = trimmed.replace(/^[<"'\s]+|[>"'\s]+$/g, '').trim();
 
-  // YouTube parser
-  const ytMatch = trimmed.match(
-    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/i
+  // If user pasted just a direct 11-character YouTube video ID (alphanumeric, -, _)
+  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) {
+    return {
+      type: 'youtube',
+      videoId: trimmed,
+      cleanUrl: `https://www.youtube.com/watch?v=${trimmed}`,
+    };
+  }
+
+  // Ensure protocol if missing (otherwise relative URLs fail in webview)
+  let normalizedUrl = trimmed;
+  if (!/^https?:\/\//i.test(normalizedUrl) && !/^blob:/i.test(normalizedUrl) && !/^data:/i.test(normalizedUrl)) {
+    normalizedUrl = 'https://' + normalizedUrl;
+  }
+
+  // YouTube checks across any subdomain (m.youtube, www.youtube, music.youtube, youtu.be, etc.)
+  try {
+    const parsed = new URL(normalizedUrl);
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (hostname.includes('youtube.com') || hostname === 'youtu.be') {
+      // 1. Check pathname for youtu.be/ID or youtube.com/embed/ID, /shorts/ID, /live/ID, /v/ID
+      const pathParts = parsed.pathname.split('/').filter(Boolean);
+      if (hostname === 'youtu.be' && pathParts.length > 0) {
+        const id = pathParts[0];
+        if (/^[A-Za-z0-9_-]{11}$/.test(id)) {
+          return { type: 'youtube', videoId: id, cleanUrl: normalizedUrl };
+        }
+      }
+
+      for (const prefix of ['embed', 'shorts', 'live', 'v']) {
+        const idx = pathParts.indexOf(prefix);
+        if (idx !== -1 && pathParts[idx + 1] && /^[A-Za-z0-9_-]{11}$/.test(pathParts[idx + 1])) {
+          return { type: 'youtube', videoId: pathParts[idx + 1], cleanUrl: normalizedUrl };
+        }
+      }
+
+      // 2. Check query parameter: v=ID (e.g., watch?v=ID or watch?app=desktop&v=ID)
+      const v = parsed.searchParams.get('v');
+      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) {
+        return { type: 'youtube', videoId: v, cleanUrl: normalizedUrl };
+      }
+    }
+  } catch {
+    // If standard URL parsing fails, fallback to regex
+  }
+
+  // Fallback YouTube regex
+  const ytMatch = normalizedUrl.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/|v\/|music\.youtube\.com\/watch\?(?:.*&)?v=))([A-Za-z0-9_-]{11})/i
   );
   if (ytMatch) {
     return {
       type: 'youtube',
       videoId: ytMatch[1],
-      cleanUrl: trimmed,
+      cleanUrl: normalizedUrl,
     };
   }
 
-  // Check URL query parameters for v= param on youtube domains
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.hostname.includes('youtube.com')) {
-      const v = parsed.searchParams.get('v');
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) {
-        return {
-          type: 'youtube',
-          videoId: v,
-          cleanUrl: trimmed,
-        };
-      }
-    }
-  } catch {
-    // Not a valid standard URL, continue with regex checks
-  }
-
   // Google Drive direct stream converter
-  const gDriveMatch = trimmed.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/i);
+  const gDriveMatch = normalizedUrl.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/i);
   if (gDriveMatch) {
     return {
       type: 'mp4',
@@ -48,8 +78,8 @@ export function parseMediaUrl(url: string): { type: MediaType; videoId?: string;
   }
 
   // Dropbox direct stream converter (dl=1 / raw=1)
-  if (trimmed.includes('dropbox.com')) {
-    const dropboxDirect = trimmed
+  if (normalizedUrl.includes('dropbox.com')) {
+    const dropboxDirect = normalizedUrl
       .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
       .replace(/[?&]dl=0/, '')
       .replace(/[?&]raw=1/, '');
@@ -61,25 +91,25 @@ export function parseMediaUrl(url: string): { type: MediaType; videoId?: string;
   }
 
   // HLS stream (.m3u8)
-  if (/\.m3u8(?:[?#]|$)/i.test(trimmed)) {
+  if (/\.m3u8(?:[?#]|$)/i.test(normalizedUrl)) {
     return {
       type: 'hls',
-      cleanUrl: trimmed,
+      cleanUrl: normalizedUrl,
     };
   }
 
   // Audio files (.mp3, .wav, .ogg, .m4a, .aac, .flac)
-  if (/\.(mp3|wav|ogg|m4a|aac|flac)(?:[?#]|$)/i.test(trimmed)) {
+  if (/\.(mp3|wav|ogg|m4a|aac|flac)(?:[?#]|$)/i.test(normalizedUrl)) {
     return {
       type: 'mp3',
-      cleanUrl: trimmed,
+      cleanUrl: normalizedUrl,
     };
   }
 
   // Direct video files (.mp4, .m4v, .webm, .mov, .mkv, .ogv, .3gp) or fallback video URL
   return {
     type: 'mp4',
-    cleanUrl: trimmed,
+    cleanUrl: normalizedUrl,
   };
 }
 
