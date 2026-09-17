@@ -65,12 +65,17 @@ public class SyncplaySocketClient {
                         .put("features", new JSONObject());
                 if (password != null && !password.trim().isEmpty()) hello.put("password", password);
 
-                writeRaw(new JSONObject().put("Hello", hello).toString() + "\n");
+                writeRaw(new JSONObject().put("Hello", hello).toString() + "\r\n");
                 notifyConnected();
 
                 String line;
                 while (running && (line = input.readLine()) != null) {
-                    if (!line.trim().isEmpty()) notifyMessage(line.trim());
+                    String msg = line.trim();
+                    if (msg.isEmpty()) continue;
+                    // PROTOCOL KEEP-ALIVE: Syncplay server har ~1s State ping bhejta hai.
+                    // Jawab na milne par ~15s mein silent KICK. Har ping ka fori jawab bhejo.
+                    autoReplyStatePong(msg);
+                    notifyMessage(msg);
                 }
             } catch (Exception e) {
                 notifyError("Syncplay connection failed: " + e.getMessage());
@@ -85,6 +90,34 @@ public class SyncplaySocketClient {
 
     public void sendMessage(String message) {
         executor.execute(() -> writeRaw(message));
+    }
+
+    /**
+     * Syncplay protocol keep-alive. Server sends {"State": {"ping": {"latencyCalculation": X}}}
+     * roughly every second and expects this echo back — otherwise it drops the client
+     * after ~15 seconds (silent kick, no Error message).
+     */
+    private void autoReplyStatePong(String raw) {
+        try {
+            JSONObject parsed = new JSONObject(raw);
+            JSONObject state = parsed.optJSONObject("State");
+            if (state == null) return;
+            JSONObject ping = state.optJSONObject("ping");
+            if (ping == null || !ping.has("latencyCalculation")) return;
+            double latencyCalculation = ping.getDouble("latencyCalculation");
+            JSONObject pongPing = new JSONObject()
+                    .put("latencyCalculation", latencyCalculation)
+                    .put("clientLatencyCalculation", System.currentTimeMillis() / 1000.0)
+                    .put("clientRtt", 0.0);
+            JSONObject pong = new JSONObject().put("State", new JSONObject()
+                    .put("ignoringOnTheFly", new JSONObject().put("client", 0))
+                    .put("playstate", new JSONObject()
+                            .put("position", 0.0)
+                            .put("paused", true)
+                            .put("doSeek", false))
+                    .put("ping", pongPing));
+            writeRaw(pong.toString() + "\r\n");
+        } catch (Exception ignored) { }
     }
 
     public void disconnect() {
