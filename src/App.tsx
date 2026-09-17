@@ -84,6 +84,7 @@ export default function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   const clientRef = useRef<SyncplayClient | null>(null);
+  const listTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
@@ -125,17 +126,61 @@ export default function App() {
     const port = broker.serverPort || 8999;
 
     const syncplay = makeSyncplayClient(host, port, room, user.name, '');
+    // Purana client/timer saaf karo (re-join ke waqt)
+    if (listTimerRef.current) { clearInterval(listTimerRef.current); listTimerRef.current = null; }
+    try { clientRef.current?.end(); } catch { /* ignore */ }
     clientRef.current = syncplay;
+
+    // Server ka member-roster mangwana (Syncplay protocol: {"List": null})
+    const requestList = () => {
+      try { syncplay.publish('', '{"List": null}'); } catch { /* ignore */ }
+    };
+
+    // Server messages parho — yahan se PARTY MEMBERS / online count update hoga
+    syncplay.on('message', (raw: string) => {
+      try {
+        const msg = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+        if (msg && msg.List) {
+          const roomData = msg.List[room] || Object.values(msg.List)[0] || {} as any;
+          const others: User[] = Object.keys(roomData)
+            .filter((n) => n !== user.name)
+            .map((n, i) => ({
+              id: 'sp_' + n,
+              name: n,
+              color: COLORS[i % COLORS.length],
+              avatar: { type: 'letter' },
+              ts: Date.now(),
+            }));
+          setMembers([user, ...others]);
+        }
+        // Server ne room mein daakhla confirm kiya
+        if (msg && msg.Hello) {
+          setMembers((prev) => (prev.some((m) => m.id === user.id) ? prev : [user, ...prev]));
+          requestList();
+        }
+      } catch {
+        // ignore non-JSON lines
+      }
+    });
 
     syncplay.on('connect', () => {
       setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
       setTimeout(() => setStatusMessage(null), 3500);
       if (soundEnabled) playJoinTune();
       confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
+      setMembers([user]);
+      requestList(); // foran roster maango
+      listTimerRef.current = setInterval(requestList, 5000); // har 5s roster refresh
     });
     syncplay.on('error', (err: any) => {
       const msg = err?.message || String(err);
       setStatusMessage(`Syncplay error: ${msg}`);
+    });
+    syncplay.on('disconnect', () => {
+      if (listTimerRef.current) { clearInterval(listTimerRef.current); listTimerRef.current = null; }
+      setMembers([]);
+      setStatusMessage('Disconnected from server — dobara join karein');
+      setTimeout(() => setStatusMessage(null), 4000);
     });
     syncplay.connect();
   };
