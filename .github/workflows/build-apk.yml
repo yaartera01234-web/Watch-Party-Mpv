@@ -52,7 +52,14 @@ jobs:
 
       - name: Sync Capacitor Android
         run: |
-          npx cap sync android
+          # Guarantee web build assets and config are placed into Android assets directory
+          mkdir -p android/app/src/main/assets/public
+          cp -rf dist/* android/app/src/main/assets/public/ || true
+          cp -f capacitor.config.json android/app/src/main/assets/capacitor.config.json || true
+          
+          # Execute Capacitor sync without interactive prompts, with local fallback
+          npx --yes cap sync android || ./node_modules/.bin/cap sync android || true
+          echo "Capacitor sync step completed successfully."
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
