@@ -91,6 +91,7 @@ export default function App() {
   const clientIgnRef = useRef(0);
   const playlistFilesRef = useRef<string[]>([]);
   const playlistIndexRef = useRef<number | null>(null);
+  const hadConnectedRef = useRef(false);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
@@ -262,13 +263,34 @@ export default function App() {
     });
 
     syncplay.on('connect', () => {
-      setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
-      setTimeout(() => setStatusMessage(null), 3500);
-      if (soundEnabled) playJoinTune();
-      confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
+      if (hadConnectedRef.current) {
+        // Reconnect hua (net slow/cut ke baad)
+        setStatusMessage('✅ Reconnected! Sync wapas live hai');
+        setTimeout(() => setStatusMessage(null), 3500);
+      } else {
+        setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
+        setTimeout(() => setStatusMessage(null), 3500);
+        if (soundEnabled) playJoinTune();
+        confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
+        hadConnectedRef.current = true;
+      }
       setMembers([user]);
       requestList(); // foran roster maango
+      if (listTimerRef.current) clearInterval(listTimerRef.current);
       listTimerRef.current = setInterval(requestList, 5000); // har 5s roster refresh
+      // Playlist/state dobara sync (reconnect ke baad room ko fresh halat do)
+      if (currentMedia) {
+        try {
+          syncplay.publish('', SyncplayProtocol.playlistChange(user.name, queue.length ? queue.map((q) => q.url) : [currentMedia.url]));
+          syncplay.publish('', SyncplayProtocol.playlistIndex(user.name, queueIndex >= 0 ? queueIndex : 0));
+          syncplay.setPlaybackState(currentTime, !isPlaying);
+        } catch { /* ignore */ }
+      }
+    });
+    syncplay.on('reconnecting', (info: any) => {
+      const n = info?.attempt ?? 1;
+      const max = info?.max ?? 15;
+      setStatusMessage(`🔄 Net cut gaya — auto-reconnect... (koshish ${n}/${max})`);
     });
     syncplay.on('error', (err: any) => {
       const msg = err?.message || String(err);
@@ -277,8 +299,7 @@ export default function App() {
     syncplay.on('disconnect', () => {
       if (listTimerRef.current) { clearInterval(listTimerRef.current); listTimerRef.current = null; }
       setMembers([]);
-      setStatusMessage('Disconnected from server — dobara join karein');
-      setTimeout(() => setStatusMessage(null), 4000);
+      setStatusMessage('⚠️ Connection cut gaya — auto-reconnect shuru ho raha hai...');
     });
     syncplay.connect();
   };
@@ -300,6 +321,7 @@ export default function App() {
     setRoomName(cleanRoom);
     setBrokerId(brokerIdx);
     setJoined(true);
+    hadConnectedRef.current = false;
 
     try {
       localStorage.setItem('wp_prefs', JSON.stringify({
