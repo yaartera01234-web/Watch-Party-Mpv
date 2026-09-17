@@ -26,6 +26,18 @@ public class SyncplaySocketClient {
     private volatile BufferedReader input;
     private volatile BufferedWriter output;
     private volatile boolean running;
+    // Real playback state (JS se ata hai) — taake ping-pong server ko sahi halat bataye.
+    private volatile double lastPosition = 0.0;
+    private volatile boolean lastPaused = true;
+    // Server ka ignoring counter — isay agle pong mein {server: N} se ACK karna LAZMI hai
+    // warna server pings bhejna band kar deta hai aur ~13s mein connection kaat deta hai.
+    private volatile long serverIgnoring = 0;
+
+    /** JS layer apni current playback state yahan update karti hai. */
+    public void setPlaybackState(double position, boolean paused) {
+        lastPosition = position;
+        lastPaused = paused;
+    }
 
     public interface SyncplayListener {
         void onConnected();
@@ -102,22 +114,44 @@ public class SyncplaySocketClient {
             JSONObject parsed = new JSONObject(raw);
             JSONObject state = parsed.optJSONObject("State");
             if (state == null) return;
+
+            // 1) Server ke ignoringOnTheFly.server ko yaad rakho (ACK ke liye)
+            JSONObject ignoring = state.optJSONObject("ignoringOnTheFly");
+            if (ignoring != null && ignoring.has("server")) {
+                try { serverIgnoring = ignoring.getLong("server"); } catch (Exception ignored) { }
+            }
+
             JSONObject ping = state.optJSONObject("ping");
             if (ping == null || !ping.has("latencyCalculation")) return;
             double latencyCalculation = ping.getDouble("latencyCalculation");
-            JSONObject pongPing = new JSONObject()
-                    .put("latencyCalculation", latencyCalculation)
-                    .put("clientLatencyCalculation", System.currentTimeMillis() / 1000.0)
-                    .put("clientRtt", 0.0);
-            JSONObject pong = new JSONObject().put("State", new JSONObject()
-                    .put("ignoringOnTheFly", new JSONObject().put("client", 0))
-                    .put("playstate", new JSONObject()
-                            .put("position", 0.0)
-                            .put("paused", true)
-                            .put("doSeek", false))
-                    .put("ping", pongPing));
-            writeRaw(pong.toString() + "\r\n");
+
+            // 2) Pending server-ACK ho to isi pong ke saath bhej do (PROTOCOL KA RULE)
+            String ackPart = "";
+            long ack = serverIgnoring;
+            if (ack > 0) {
+                ackPart = ", \"server\": " + ack;
+                serverIgnoring = 0;
+            }
+
+            // OUTBOUND FRAME: hand-built — plain decimals (E-notation server ko nahi chalti)
+            // aur spaced format (compact JSON server reject karta hai).
+            String pong = "{\"State\": {\"ignoringOnTheFly\": {\"client\": 0" + ackPart + "}, "
+                    + "\"playstate\": {\"position\": " + plainNumber(lastPosition)
+                    + ", \"paused\": " + lastPaused + ", \"doSeek\": false}, "
+                    + "\"ping\": {\"latencyCalculation\": " + plainNumber(latencyCalculation)
+                    + ", \"clientLatencyCalculation\": " + plainNumber(System.currentTimeMillis() / 1000.0)
+                    + ", \"clientRtt\": 0.0}}}";
+            writeRaw(pong + "\r\n");
         } catch (Exception ignored) { }
+    }
+
+    /** Doubles ko hamesha plain decimal mein likho (server 1.23E9 format nahi samajhta). */
+    private static String plainNumber(double v) {
+        try {
+            return new java.math.BigDecimal(String.valueOf(v)).toPlainString();
+        } catch (Exception e) {
+            return String.valueOf(v);
+        }
     }
 
     public void disconnect() {
@@ -130,12 +164,42 @@ public class SyncplaySocketClient {
             try {
                 BufferedWriter writer = output;
                 if (!running || writer == null) return;
-                writer.write(message);
+                // syncplay.pl ka server COMPACT JSON reject karta hai
+                // ("Not a json encoded string") — har message spaced format mein jayega.
+                String wire = message;
+                while (wire.endsWith("\n") || wire.endsWith("\r")) wire = wire.substring(0, wire.length() - 1);
+                writer.write(toSpacedJson(wire) + "\r\n");
                 writer.flush();
             } catch (Exception e) {
                 notifyError("Syncplay send failed: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Compact JSON ko Python json.dumps jaisa format deta hai: {"a": 1, "b": 2}
+     * (':' aur ',' ke baad ek space — sirf strings ke BAHAR, escape-aware).
+     */
+    private static String toSpacedJson(String compact) {
+        StringBuilder out = new StringBuilder(compact.length() + 32);
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < compact.length(); i++) {
+            char c = compact.charAt(i);
+            if (inString) {
+                out.append(c);
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+            } else {
+                boolean nextIsSpace = (i + 1 < compact.length()) && compact.charAt(i + 1) == ' ';
+                if (c == '"') { inString = true; out.append(c); }
+                else if (c == ':') out.append(nextIsSpace ? ":" : ": ");
+                else if (c == ',') out.append(nextIsSpace ? "," : ", ");
+                else out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     private synchronized void closeQuietly() {

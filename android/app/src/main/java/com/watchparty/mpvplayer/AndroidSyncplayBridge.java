@@ -60,12 +60,20 @@ public final class AndroidSyncplayBridge {
     @JavascriptInterface
     public void setRoom(String room) { /* room changes are sent by reconnecting */ }
 
+    /** JS apni asal playback state bataye taake auto ping-pong sahi position/paused bheje. */
+    @JavascriptInterface
+    public void setPlaybackState(double position, boolean paused) {
+        socketClient.setPlaybackState(position, paused);
+    }
+
     @JavascriptInterface
     public void sendMessage(String topic, String payload) {
         if (payload == null || payload.trim().isEmpty()) return;
         try {
-            // Syncplay protocol frames messages with CRLF (\r\n), not plain \n.
-            socketClient.sendMessage(new JSONObject(payload).toString() + "\r\n");
+            // Sirf validate karo; RE-SERIALIZE MAT KARO (org.json doubles ko E-notation
+            // mein badal deta hai, aur syncplay server usay reject kar deta hai).
+            new JSONObject(payload);
+            socketClient.sendMessage(payload + "\r\n");
         } catch (Exception e) {
             Log.e(TAG, "Invalid Syncplay payload", e);
         }
