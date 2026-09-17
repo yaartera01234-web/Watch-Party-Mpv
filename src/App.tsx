@@ -127,15 +127,17 @@ export default function App() {
     const syncplay = makeSyncplayClient(host, port, room, user.name, '');
     clientRef.current = syncplay;
 
-    try {
-      syncplay.connect();
+    syncplay.on('connect', () => {
       setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
       setTimeout(() => setStatusMessage(null), 3500);
       if (soundEnabled) playJoinTune();
       confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
-    } catch {
-      setStatusMessage('Native Syncplay bridge unavailable. Please ensure the Android bridge is active.');
-    }
+    });
+    syncplay.on('error', (err: any) => {
+      const msg = err?.message || String(err);
+      setStatusMessage(`Syncplay error: ${msg}`);
+    });
+    syncplay.connect();
   };
 
   const handleJoinParty = (name: string, room: string, brokerIdx: number, avatar: AvatarData) => {
