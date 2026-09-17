@@ -37,32 +37,24 @@ export class SyncplayClient {
 
   connect() {
     const bridge = this.androidBridge || (typeof window !== 'undefined' ? (window as any).AndroidSyncplayBridge : undefined);
-
-    if (bridge?.connect) {
-      bridge.connect(this.roomConfig.host, this.roomConfig.port, this.roomConfig.room, this.roomConfig.username, this.roomConfig.password ?? '');
-      this.connected = true;
-      this.emit('connect');
+    if (!bridge || typeof bridge.connect !== 'function') {
+      this.connected = false;
+      this.emit('error', new Error('Syncplay native bridge is not available on this device.'));
       return this;
     }
 
+    bridge.connect(this.roomConfig.host, this.roomConfig.port, this.roomConfig.room, this.roomConfig.username, this.roomConfig.password ?? '');
     this.connected = false;
-    this.emit('error', new Error('Syncplay native bridge is not available on this device.'));
     return this;
   }
 
   subscribe(topics: string[] | string, opts?: any) {
-    if (typeof topics === 'string') {
-      return this;
-    }
-    if (Array.isArray(topics)) {
-      return this;
-    }
     return this;
   }
 
   publish(topic: string, payload: string, opts?: any) {
     const bridge = this.androidBridge || (typeof window !== 'undefined' ? (window as any).AndroidSyncplayBridge : undefined);
-    if (bridge?.sendMessage) {
+    if (bridge && typeof bridge.sendMessage === 'function') {
       bridge.sendMessage(topic, payload);
     }
     return this;
@@ -70,7 +62,9 @@ export class SyncplayClient {
 
   end(force?: boolean) {
     const bridge = this.androidBridge || (typeof window !== 'undefined' ? (window as any).AndroidSyncplayBridge : undefined);
-    bridge?.disconnect?.();
+    if (bridge && typeof bridge.disconnect === 'function') {
+      bridge.disconnect();
+    }
     this.connected = false;
     return this;
   }
