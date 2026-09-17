@@ -31,6 +31,7 @@ import {
   playSyncTune 
 } from './utils/audio';
 import { makeSyncplayClient, SyncplayClient } from './utils/syncplayClient';
+import { SyncplayProtocol } from './utils/syncplayProtocol';
 
 import { Navbar } from './components/Navbar';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -85,6 +86,11 @@ export default function App() {
 
   const clientRef = useRef<SyncplayClient | null>(null);
   const listTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Syncplay protocol state
+  const lastPingRef = useRef<number | undefined>(undefined);
+  const clientIgnRef = useRef(0);
+  const playlistFilesRef = useRef<string[]>([]);
+  const playlistIndexRef = useRef<number | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
@@ -108,6 +114,15 @@ export default function App() {
     }
   }, []);
 
+  // Native keep-alive pong ko asal playback state dete raho (har 10s)
+  useEffect(() => {
+    if (!joined) return;
+    const t = setInterval(() => {
+      try { clientRef.current?.setPlaybackState(currentTime, !isPlaying); } catch { /* ignore */ }
+    }, 10000);
+    return () => clearInterval(t);
+  }, [joined, currentTime, isPlaying]);
+
   const generateMid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
   const isDuplicate = (id?: string) => {
@@ -118,6 +133,41 @@ export default function App() {
       seenIdsRef.current.clear();
     }
     return false;
+  };
+
+  // Remote (ya doosre device ka) playlist server se aaye to local queue/media mein daalo
+  const applyRemotePlaylist = (files: string[], index: number | null, byUser: string | null, selfUser: User) => {
+    if (!files || files.length === 0) return;
+    if (byUser && byUser === selfUser.name) return; // apni broadcast ka echo — ignore
+    const items: MediaItem[] = files.map((f) => {
+      const parsed = parseMediaUrl(f);
+      const cleanUrl = parsed.type !== 'none' ? parsed.cleanUrl : f;
+      return {
+        type: parsed.type,
+        url: cleanUrl,
+        videoId: parsed.videoId,
+        label: formatMediaLabel({ type: parsed.type, url: cleanUrl, videoId: parsed.videoId }),
+        by: byUser || 'Remote',
+        addedAt: Date.now(),
+      };
+    });
+    setQueue(items);
+    const idx = index !== null && index >= 0 && index < items.length ? index : 0;
+    setQueueIndex(idx);
+    const active = items[idx];
+    setCurrentMedia((prev) => {
+      const same = prev && prev.url === active.url && prev.videoId === active.videoId;
+      if (same) return prev;
+      setCurrentTime(0);
+      return active;
+    });
+  };
+
+  // Queue ko official playlist (Set.playlistChange + Set.playlistIndex) ke roop mein bhejo
+  const syncQueueToRoom = (items: MediaItem[], index: number | null) => {
+    if (!clientRef.current || !currentUser) return;
+    clientRef.current.publish('', SyncplayProtocol.playlistChange(currentUser.name, items.map((i) => i.url)));
+    clientRef.current.publish('', SyncplayProtocol.playlistIndex(currentUser.name, index));
   };
 
   const connectSyncplay = (user: User, room: string, brokerIdx: number) => {
@@ -157,6 +207,54 @@ export default function App() {
         if (msg && msg.Hello) {
           setMembers((prev) => (prev.some((m) => m.id === user.id) ? prev : [user, ...prev]));
           requestList();
+        }
+        // --- OFFICIAL PLAYBACK SYNC: kisi ne play/pause/seek kiya (State.playstate) ---
+        if (msg && msg.State && msg.State.playstate) {
+          const ps = msg.State.playstate;
+          const ping = msg.State.ping || {};
+          if (typeof ping.latencyCalculation === 'number') lastPingRef.current = ping.latencyCalculation;
+          // Apni initiated change ka echo wapas aaye to client counter reset karo (official behavior)
+          const ign = msg.State.ignoringOnTheFly;
+          if (ign && typeof ign.client === 'number' && ign.client === clientIgnRef.current && clientIgnRef.current !== 0) {
+            clientIgnRef.current = 0;
+          }
+          // setBy = jis ne change kiya. Sirf doosron ki changes apply karo (apni + routine pings nahi).
+          if (ps.setBy && ps.setBy !== user.name) {
+            if (typeof ps.position === 'number') setCurrentTime(ps.position);
+            if (typeof ps.paused === 'boolean') setIsPlaying(!ps.paused);
+            setMessages((prev) => [...prev, {
+              id: generateMid(), senderId: 'system', name: 'System', color: '#38bdf8',
+              text: `🔄 ${ps.setBy} ${ps.paused ? '⏸️ pause kiya' : '▶️ play kiya'}${ps.doSeek ? ' (seek)' : ''}`,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              isSystem: true,
+            }]);
+          }
+        }
+        // --- OFFICIAL CHAT: server ne room ka message relay kiya ---
+        if (msg && msg.Chat && msg.Chat.username && msg.Chat.username !== user.name) {
+          const c = msg.Chat;
+          const hash = [...String(c.username)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+          const chatMsg: ChatMessage = {
+            id: generateMid(),
+            senderId: 'sp_' + c.username,
+            name: c.username,
+            color: COLORS[hash % COLORS.length],
+            text: c.message || '',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages((prev) => [...prev, chatMsg]);
+          if (soundEnabled) playMsgTune();
+        }
+        // --- OFFICIAL PLAYLIST: remote user ne media load badla ---
+        if (msg && msg.Set && msg.Set.playlistChange) {
+          const files = msg.Set.playlistChange.files || [];
+          playlistFilesRef.current = files;
+          applyRemotePlaylist(files, playlistIndexRef.current, msg.Set.playlistChange.user, user);
+        }
+        if (msg && msg.Set && msg.Set.playlistIndex) {
+          const idx = msg.Set.playlistIndex.index;
+          playlistIndexRef.current = idx ?? null;
+          applyRemotePlaylist(playlistFilesRef.current, playlistIndexRef.current, msg.Set.playlistIndex.user, user);
         }
       } catch {
         // ignore non-JSON lines
@@ -290,29 +388,30 @@ export default function App() {
     setIsPlaying(state.playing);
   };
 
+  // Play/pause/seek/sync — ab official Syncplay State messages mein (custom JSON = server kick!)
   const broadcastCommand = (action: string, extra: Record<string, any> = {}) => {
     if (!clientRef.current || !currentUser) return;
-    const payload = {
-      action,
-      from: currentUser.id,
-      by: currentUser.name,
-      mid: generateMid(),
-      ...extra,
-    };
-    clientRef.current.publish(`${ROOM_PREFIX}${roomName}/cmd`, JSON.stringify(payload), { qos: 1 });
+    const c = clientRef.current;
+    const position = extra.time !== undefined ? extra.time : currentTime;
+    let paused: boolean;
+    let doSeek = false;
 
-    if (action === 'play' || action === 'pause' || action === 'seek' || action === 'load') {
-      const state: PlaybackState = {
-        type: currentMedia?.type || 'none',
-        url: currentMedia?.url || '',
-        videoId: currentMedia?.videoId,
-        time: extra.time !== undefined ? extra.time : currentTime,
-        playing: action === 'play' ? true : action === 'pause' ? false : isPlaying,
-        speed: 1,
-        at: Date.now(),
-      };
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/state`, JSON.stringify(state), { qos: 1, retain: true });
-    }
+    if (action === 'play') paused = false;
+    else if (action === 'pause') paused = true;
+    else if (action === 'seek') { paused = !isPlaying; doSeek = true; }
+    else if (action === 'load') { paused = false; doSeek = true; }
+    else if (action === 'sync') { paused = extra.playing !== undefined ? !extra.playing : !isPlaying; doSeek = true; }
+    else return;
+
+    c.publish('', SyncplayProtocol.state({
+      position: action === 'load' ? 0 : position,
+      paused,
+      doSeek,
+      clientIgnoring: ++clientIgnRef.current,
+      latencyCalculation: lastPingRef.current,
+    }));
+    // Native keep-alive pong ko bhi asal halat batao
+    try { c.setPlaybackState(action === 'load' ? 0 : position, paused); } catch { /* ignore */ }
   };
 
   const handleLoadMedia = () => {
@@ -339,9 +438,7 @@ export default function App() {
     setQueueIndex(0);
 
     broadcastCommand('load', { media: item, time: 0 });
-    if (clientRef.current) {
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: newQueue, index: 0, lastAdvance: Date.now() }), { qos: 1, retain: true });
-    }
+    syncQueueToRoom(newQueue, 0);
   };
 
   const handleAddToQueue = () => {
@@ -372,9 +469,7 @@ export default function App() {
     setQueueIndex(newIndex);
     setUrlInput('');
 
-    if (clientRef.current) {
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: newQueue, index: newIndex, lastAdvance: Date.now() }), { qos: 1, retain: true });
-    }
+    syncQueueToRoom(newQueue, newIndex);
   };
 
   const handlePlayQueueIndex = (index: number) => {
@@ -386,9 +481,7 @@ export default function App() {
     setIsPlaying(true);
     broadcastCommand('load', { media: item, time: 0 });
 
-    if (clientRef.current) {
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: queue, index, lastAdvance: Date.now() }), { qos: 1, retain: true });
-    }
+    syncQueueToRoom(queue, index);
   };
 
   const handleRemoveQueueIndex = (index: number) => {
@@ -400,17 +493,13 @@ export default function App() {
     setQueue(updated);
     setQueueIndex(nextIndex);
 
-    if (clientRef.current) {
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: updated, index: nextIndex, lastAdvance: Date.now() }), { qos: 1, retain: true });
-    }
+    syncQueueToRoom(updated, nextIndex);
   };
 
   const handleClearQueue = () => {
     setQueue([]);
     setQueueIndex(-1);
-    if (clientRef.current) {
-      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: [], index: -1, lastAdvance: Date.now() }), { qos: 1, retain: true });
-    }
+    syncQueueToRoom([], null);
   };
 
   const handleMediaEnd = () => {
@@ -457,28 +546,24 @@ export default function App() {
     };
 
     setMessages((prev) => [...prev, msg]);
-    clientRef.current.publish(`${ROOM_PREFIX}${roomName}/chat`, JSON.stringify(msg), { qos: 1 });
+    // Official Syncplay Chat: plain string. Custom JSON bhejne par server kick karta hai!
+    const wireText = replyTo
+      ? `↪️ ${replyTo.name}: "${(replyTo.text || '').slice(0, 50)}" — ${text}`
+      : text;
+    clientRef.current.publish('', SyncplayProtocol.chat(wireText));
   };
 
   const handleTyping = () => {
-    if (!currentUser || !clientRef.current) return;
-    const topic = `${ROOM_PREFIX}${roomName}/typing/${currentUser.id}`;
-    clientRef.current.publish(topic, JSON.stringify({ name: currentUser.name }), { qos: 0 });
+    // Syncplay protocol typing-indicators support nahi karta.
+    // Wire par kuch na bhejo — warna server connection kaat dega.
   };
 
   const handleSendReaction = (emoji: string) => {
     if (!currentUser || !clientRef.current) return;
     const x = Math.floor(Math.random() * 80) + 10;
     triggerLocalReaction(emoji, currentUser.name, x);
-
-    const event = {
-      type: 'reaction',
-      emoji,
-      senderName: currentUser.name,
-      x,
-      mid: generateMid(),
-    };
-    clientRef.current.publish(`${ROOM_PREFIX}${roomName}/events`, JSON.stringify(event), { qos: 1 });
+    // NOTE: Reactions ab sirf LOCAL hain. Syncplay custom events relay nahi karta —
+    // custom JSON bhejne par server connection kaat deta hai.
   };
 
   const triggerLocalReaction = (emoji: string, senderName: string, x: number) => {
@@ -497,10 +582,9 @@ export default function App() {
 
   const handleLeaveRoom = () => {
     if (clientRef.current && currentUser) {
-      const willTopic = `${ROOM_PREFIX}${roomName}/members/${currentUser.id}`;
-      clientRef.current.publish(willTopic, '', { qos: 1, retain: true });
       clientRef.current.end(true);
     }
+    if (listTimerRef.current) { clearInterval(listTimerRef.current); listTimerRef.current = null; }
     setJoined(false);
     setCurrentUser(null);
     setMessages([]);
