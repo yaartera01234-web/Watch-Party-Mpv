@@ -26,7 +26,33 @@ public class MainActivity extends BridgeActivity {
         enterImmersiveMode();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         mpvPlayerView = new MpvPlayerView(this);
-        syncplayBridge = new AndroidSyncplayBridge(this);
+        syncplayBridge = new AndroidSyncplayBridge(this::dispatchSyncplayEvent);
+        setupWebView();
+    }
+
+    private void setupWebView() {
+        try {
+            WebView webView = getBridge() == null ? null : getBridge().getWebView();
+            if (webView == null) return;
+            WebSettings settings = webView.getSettings();
+            settings.setMediaPlaybackRequiresUserGesture(false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            }
+            settings.setDomStorageEnabled(true);
+            settings.setDatabaseEnabled(true);
+            settings.setAllowFileAccess(true);
+            settings.setAllowContentAccess(true);
+            settings.setAllowFileAccessFromFileURLs(true);
+            settings.setAllowUniversalAccessFromFileURLs(true);
+            settings.setJavaScriptCanOpenWindowsAutomatically(true);
+            // IMPORTANT: addJavascriptInterface must run BEFORE the page's JS needs it.
+            // onCreate (right after super) is the earliest safe point — much safer than onStart.
+            webView.addJavascriptInterface(new NativeMpvBridge(), "AndroidMpvBridge");
+            webView.addJavascriptInterface(syncplayBridge, "AndroidSyncplayBridge");
+        } catch (Exception e) {
+            Log.e(TAG, "WebView setup failed", e);
+        }
     }
 
     private void enterImmersiveMode() {
@@ -63,26 +89,6 @@ public class MainActivity extends BridgeActivity {
     public void onStart() {
         super.onStart();
         enterImmersiveMode();
-        try {
-            WebView webView = getBridge() == null ? null : getBridge().getWebView();
-            if (webView == null) return;
-            WebSettings settings = webView.getSettings();
-            settings.setMediaPlaybackRequiresUserGesture(false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-            }
-            settings.setDomStorageEnabled(true);
-            settings.setDatabaseEnabled(true);
-            settings.setAllowFileAccess(true);
-            settings.setAllowContentAccess(true);
-            settings.setAllowFileAccessFromFileURLs(true);
-            settings.setAllowUniversalAccessFromFileURLs(true);
-            settings.setJavaScriptCanOpenWindowsAutomatically(true);
-            webView.addJavascriptInterface(new NativeMpvBridge(), "AndroidMpvBridge");
-            webView.addJavascriptInterface(syncplayBridge, "AndroidSyncplayBridge");
-        } catch (Exception e) {
-            Log.e(TAG, "WebView setup failed", e);
-        }
     }
 
     public class NativeMpvBridge {
