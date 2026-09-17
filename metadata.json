@@ -1,0 +1,6 @@
+{
+  "name": "Watch Party & MPV Player",
+  "description": "Real-time synced Watch Party with built-in in-app MPV Player engine, hardware acceleration, gesture controls, and swipe-to-reply chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
