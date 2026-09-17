@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import mqtt, { MqttClient } from 'mqtt';
 import confetti from 'canvas-confetti';
 import { 
   Play, 
@@ -31,6 +30,7 @@ import {
   playReactionTune, 
   playSyncTune 
 } from './utils/audio';
+import { makeSyncplayClient, SyncplayClient } from './utils/syncplayClient';
 
 import { Navbar } from './components/Navbar';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -83,12 +83,10 @@ export default function App() {
   const [audioBoost, setAudioBoost] = useState(1.0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
-  // MQTT Client ref & deduplication
-  const clientRef = useRef<MqttClient | null>(null);
+  const clientRef = useRef<SyncplayClient | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // Load saved preferences & URL room param
   useEffect(() => {
     initAudioUnlock();
     try {
@@ -121,7 +119,25 @@ export default function App() {
     return false;
   };
 
-  // Connect to MQTT Broker when user joins
+  const connectSyncplay = (user: User, room: string, brokerIdx: number) => {
+    const broker = BROKERS[brokerIdx] || BROKERS[0];
+    const host = broker.serverHost || 'syncplay.pl';
+    const port = broker.serverPort || 8999;
+
+    const syncplay = makeSyncplayClient(host, port, room, user.name, '');
+    clientRef.current = syncplay;
+
+    try {
+      syncplay.connect();
+      setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
+      setTimeout(() => setStatusMessage(null), 3500);
+      if (soundEnabled) playJoinTune();
+      confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
+    } catch {
+      setStatusMessage('Native Syncplay bridge unavailable. Please ensure the Android bridge is active.');
+    }
+  };
+
   const handleJoinParty = (name: string, room: string, brokerIdx: number, avatar: AvatarData) => {
     const cleanRoom = room.trim().replace(/[#+\0]/g, '').slice(0, 24) || 'main';
     const userId = 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -150,257 +166,9 @@ export default function App() {
       // ignore
     }
 
-    connectMqtt(user, cleanRoom, brokerIdx);
+    connectSyncplay(user, cleanRoom, brokerIdx);
   };
 
-  const connectMqtt = (user: User, room: string, brokerIdx: number) => {
-    if (clientRef.current) {
-      try {
-        clientRef.current.end(true);
-      } catch {
-        // ignore
-      }
-    }
-
-    const broker = BROKERS[brokerIdx] || BROKERS[0];
-    const ns = broker.roomNamespace ? `${broker.roomNamespace}/` : '';
-    const roomTopic = `${ROOM_PREFIX}${ns}${room}`;
-    const topics = {
-      cmd: `${roomTopic}/cmd`,
-      state: `${roomTopic}/state`,
-      queue: `${roomTopic}/queue`,
-      chat: `${roomTopic}/chat`,
-      events: `${roomTopic}/events`,
-      members: `${roomTopic}/members/+`,
-      typing: `${roomTopic}/typing/+`,
-    };
-
-    try {
-      const client = mqtt.connect(broker.url, {
-        clientId: `wp_${user.id}_${Math.random().toString(36).slice(2, 6)}`,
-        clean: true,
-        connectTimeout: 9000,
-        reconnectPeriod: 3000,
-        will: {
-          topic: `${roomTopic}/members/${user.id}`,
-          payload: '',
-          qos: 1,
-          retain: true,
-        },
-      });
-
-      clientRef.current = client;
-
-      client.on('connect', () => {
-        setStatusMessage(`Connected to ${broker.name} (Port ${broker.serverPort || 8999})`);
-        setTimeout(() => setStatusMessage(null), 3500);
-
-        // Subscribe to all room channels
-        client.subscribe(Object.values(topics), { qos: 1 });
-
-        // Publish own presence
-        client.publish(
-          `${roomTopic}/members/${user.id}`,
-          JSON.stringify({ ...user, ts: Date.now() }),
-          { qos: 1, retain: true }
-        );
-
-        // Announce join event
-        client.publish(
-          topics.events,
-          JSON.stringify({
-            type: 'join',
-            name: user.name,
-            from: user.id,
-            mid: generateMid(),
-          }),
-          { qos: 1 }
-        );
-
-        if (soundEnabled) playJoinTune();
-        confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
-      });
-
-      client.on('message', (topic, payload) => {
-        try {
-          const str = payload.toString();
-          if (!str && topic.startsWith(`${roomTopic}/members/`)) {
-            // User left
-            const departedId = topic.slice(`${roomTopic}/members/`.length);
-            setMembers((prev) => {
-              const departed = prev.find((m) => m.id === departedId);
-              if (departed && departed.id !== user.id) {
-                if (soundEnabled) playLeaveTune();
-                setMessages((mPrev) => [
-                  ...mPrev,
-                  {
-                    id: generateMid(),
-                    senderId: 'system',
-                    name: 'System',
-                    color: '#f59e0b',
-                    text: `${departed.name} left the room 👋`,
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    isSystem: true,
-                  },
-                ]);
-              }
-              return prev.filter((m) => m.id !== departedId);
-            });
-            return;
-          }
-
-          const data = JSON.parse(str);
-
-          // Handle Members presence
-          if (topic.startsWith(`${roomTopic}/members/`)) {
-            if (data && data.name) {
-              setMembers((prev) => {
-                const idx = prev.findIndex((m) => m.id === data.id);
-                if (idx >= 0) {
-                  const copy = [...prev];
-                  copy[idx] = data;
-                  return copy;
-                }
-                return [...prev, data];
-              });
-            }
-          }
-
-          // Handle Commands
-          else if (topic === topics.cmd) {
-            if (data.from === user.id || isDuplicate(data.mid)) return;
-            handleRemoteCommand(data);
-          }
-
-          // Handle Retained State (Late Joiner Sync)
-          else if (topic === topics.state) {
-            if (isDuplicate(data.mid)) return;
-            handleRemoteState(data);
-          }
-
-          // Handle Queue Sync
-          else if (topic === topics.queue) {
-            if (Array.isArray(data.items)) {
-              setQueue(data.items);
-              if (data.index !== undefined) setQueueIndex(data.index);
-            }
-          }
-
-          // Handle Chat messages
-          else if (topic === topics.chat) {
-            if (isDuplicate(data.id)) return;
-            setMessages((prev) => [...prev, data]);
-            if (data.senderId !== user.id) {
-              if (soundEnabled) {
-                playMsgTune();
-              }
-              // Native Web Notification if user is on another tab/app
-              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
-                try {
-                  new Notification(`${data.name} (Watch Party)`, {
-                    body: data.text,
-                    tag: 'wp-chat-msg',
-                  });
-                } catch {
-                  // ignore
-                }
-              }
-            }
-          }
-
-          // Handle Events (e.g. Join or Reaction)
-          else if (topic === topics.events) {
-            if (isDuplicate(data.mid)) return;
-            if (data.type === 'join' && data.from !== user.id) {
-              if (soundEnabled) playJoinTune();
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: generateMid(),
-                  senderId: 'system',
-                  name: 'System',
-                  color: '#10b981',
-                  text: `${data.name} joined the party 🎉`,
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  isSystem: true,
-                },
-              ]);
-            } else if (data.type === 'reaction') {
-              triggerLocalReaction(data.emoji, data.senderName, data.x);
-            }
-          }
-
-          // Handle Typing indicators
-          else if (topic.startsWith(`${roomTopic}/typing/`)) {
-            const senderId = topic.slice(`${roomTopic}/typing/`.length);
-            if (senderId === user.id) return;
-            if (data && data.name) {
-              setTypingText(`${data.name} is typing...`);
-              if (typingTimersRef.current.has(senderId)) {
-                clearTimeout(typingTimersRef.current.get(senderId));
-              }
-              const timeout = setTimeout(() => {
-                setTypingText(null);
-                typingTimersRef.current.delete(senderId);
-              }, 2500);
-              typingTimersRef.current.set(senderId, timeout);
-            }
-          }
-        } catch {
-          // ignore parse errors
-        }
-      });
-    } catch {
-      setStatusMessage('Connection failed. Please choose another broker.');
-    }
-  };
-
-  // Heartbeat presence interval
-  useEffect(() => {
-    if (!joined || !currentUser || !clientRef.current) return;
-    const interval = setInterval(() => {
-      if (clientRef.current?.connected) {
-        const topic = `${ROOM_PREFIX}${roomName}/members/${currentUser.id}`;
-        clientRef.current.publish(
-          topic,
-          JSON.stringify({ ...currentUser, ts: Date.now() }),
-          { qos: 1, retain: true }
-        );
-      }
-    }, 25000);
-    return () => clearInterval(interval);
-  }, [joined, currentUser, roomName]);
-
-  // Periodic Host Sync Heartbeat (keeps all room members in perfect sync)
-  useEffect(() => {
-    if (!joined || !currentUser || !clientRef.current || !isPlaying || !currentMedia) return;
-
-    // Check if currentUser is the room host (first member by join time)
-    const sortedMembers = [...members].sort((a, b) => (a.ts || 0) - (b.ts || 0));
-    const isHost = sortedMembers.length === 0 || sortedMembers[0]?.id === currentUser.id;
-
-    if (!isHost) return;
-
-    const interval = setInterval(() => {
-      if (clientRef.current?.connected && isPlaying) {
-        const stateTopic = `${ROOM_PREFIX}${roomName}/state`;
-        const state: PlaybackState = {
-          type: currentMedia.type,
-          url: currentMedia.url,
-          videoId: currentMedia.videoId,
-          time: currentTime,
-          playing: isPlaying,
-          speed: playbackSpeed,
-          at: Date.now(),
-        };
-        clientRef.current.publish(stateTopic, JSON.stringify(state), { qos: 1, retain: true });
-      }
-    }, 15000);
-
-    return () => clearInterval(interval);
-  }, [joined, currentUser, roomName, isPlaying, currentMedia, currentTime, playbackSpeed, members]);
-
-  // Handle remote video commands
   const handleRemoteCommand = (cmd: any) => {
     if (cmd.action === 'load' && cmd.media) {
       setCurrentMedia(cmd.media);
@@ -450,7 +218,6 @@ export default function App() {
     const elapsed = state.playing && state.at ? (Date.now() - state.at) / 1000 : 0;
     const targetTime = (state.time || 0) + elapsed;
 
-    // Only update media if different to prevent re-initializing player
     setCurrentMedia((prev) => {
       const isSame = prev && prev.type === state.type && (
         (state.type === 'youtube' && prev.videoId === state.videoId) ||
@@ -466,7 +233,6 @@ export default function App() {
       };
     });
 
-    // Seamlessly correct drift if > 2.5s
     setCurrentTime((prev) => {
       if (Math.abs(prev - targetTime) > 2.5) {
         return targetTime;
@@ -477,10 +243,8 @@ export default function App() {
     setIsPlaying(state.playing);
   };
 
-  // Broadcast Commands
   const broadcastCommand = (action: string, extra: Record<string, any> = {}) => {
     if (!clientRef.current || !currentUser) return;
-    const cmdTopic = `${ROOM_PREFIX}${roomName}/cmd`;
     const payload = {
       action,
       from: currentUser.id,
@@ -488,11 +252,9 @@ export default function App() {
       mid: generateMid(),
       ...extra,
     };
-    clientRef.current.publish(cmdTopic, JSON.stringify(payload), { qos: 1 });
+    clientRef.current.publish(`${ROOM_PREFIX}${roomName}/cmd`, JSON.stringify(payload), { qos: 1 });
 
-    // Update retained state
     if (action === 'play' || action === 'pause' || action === 'seek' || action === 'load') {
-      const stateTopic = `${ROOM_PREFIX}${roomName}/state`;
       const state: PlaybackState = {
         type: currentMedia?.type || 'none',
         url: currentMedia?.url || '',
@@ -502,11 +264,10 @@ export default function App() {
         speed: 1,
         at: Date.now(),
       };
-      clientRef.current.publish(stateTopic, JSON.stringify(state), { qos: 1, retain: true });
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/state`, JSON.stringify(state), { qos: 1, retain: true });
     }
   };
 
-  // User Actions
   const handleLoadMedia = () => {
     if (!urlInput.trim()) return;
     const parsed = parseMediaUrl(urlInput);
@@ -526,19 +287,13 @@ export default function App() {
     setIsPlaying(true);
     setUrlInput('');
 
-    // Update Queue
     const newQueue = [item];
     setQueue(newQueue);
     setQueueIndex(0);
 
-    // Broadcast
     broadcastCommand('load', { media: item, time: 0 });
     if (clientRef.current) {
-      clientRef.current.publish(
-        `${ROOM_PREFIX}${roomName}/queue`,
-        JSON.stringify({ items: newQueue, index: 0, lastAdvance: Date.now() }),
-        { qos: 1, retain: true }
-      );
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: newQueue, index: 0, lastAdvance: Date.now() }), { qos: 1, retain: true });
     }
   };
 
@@ -571,25 +326,8 @@ export default function App() {
     setUrlInput('');
 
     if (clientRef.current) {
-      clientRef.current.publish(
-        `${ROOM_PREFIX}${roomName}/queue`,
-        JSON.stringify({ items: newQueue, index: newIndex, lastAdvance: Date.now() }),
-        { qos: 1, retain: true }
-      );
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: newQueue, index: newIndex, lastAdvance: Date.now() }), { qos: 1, retain: true });
     }
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateMid(),
-        senderId: 'system',
-        name: 'System',
-        color: '#c084fc',
-        text: `➕ ${currentUser?.name} added to queue: ${item.label}`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isSystem: true,
-      },
-    ]);
   };
 
   const handlePlayQueueIndex = (index: number) => {
@@ -602,11 +340,7 @@ export default function App() {
     broadcastCommand('load', { media: item, time: 0 });
 
     if (clientRef.current) {
-      clientRef.current.publish(
-        `${ROOM_PREFIX}${roomName}/queue`,
-        JSON.stringify({ items: queue, index, lastAdvance: Date.now() }),
-        { qos: 1, retain: true }
-      );
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: queue, index, lastAdvance: Date.now() }), { qos: 1, retain: true });
     }
   };
 
@@ -620,11 +354,7 @@ export default function App() {
     setQueueIndex(nextIndex);
 
     if (clientRef.current) {
-      clientRef.current.publish(
-        `${ROOM_PREFIX}${roomName}/queue`,
-        JSON.stringify({ items: updated, index: nextIndex, lastAdvance: Date.now() }),
-        { qos: 1, retain: true }
-      );
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: updated, index: nextIndex, lastAdvance: Date.now() }), { qos: 1, retain: true });
     }
   };
 
@@ -632,11 +362,7 @@ export default function App() {
     setQueue([]);
     setQueueIndex(-1);
     if (clientRef.current) {
-      clientRef.current.publish(
-        `${ROOM_PREFIX}${roomName}/queue`,
-        JSON.stringify({ items: [], index: -1, lastAdvance: Date.now() }),
-        { qos: 1, retain: true }
-      );
+      clientRef.current.publish(`${ROOM_PREFIX}${roomName}/queue`, JSON.stringify({ items: [], index: -1, lastAdvance: Date.now() }), { qos: 1, retain: true });
     }
   };
 
@@ -657,7 +383,7 @@ export default function App() {
     if (newBrokerIdx === brokerId || !currentUser) return;
     setBrokerId(newBrokerIdx);
     const targetBroker = BROKERS[newBrokerIdx] || BROKERS[0];
-    setStatusMessage(`Connecting to ${targetBroker.name} (Port ${targetBroker.serverPort || 8999})...`);
+    setStatusMessage(`Connecting to ${targetBroker.name} (${targetBroker.serverHost || 'syncplay.pl'}:${targetBroker.serverPort || 8999})...`);
     try {
       const saved = localStorage.getItem('wp_prefs');
       const parsed = saved ? JSON.parse(saved) : {};
@@ -665,10 +391,9 @@ export default function App() {
     } catch {
       // ignore
     }
-    connectMqtt(currentUser, roomName, newBrokerIdx);
+    connectSyncplay(currentUser, roomName, newBrokerIdx);
   };
 
-  // Chat send
   const handleSendMessage = (text: string, replyTo?: { name: string; text: string } | null) => {
     if (!currentUser || !clientRef.current) return;
     const d = new Date();
@@ -694,7 +419,6 @@ export default function App() {
     clientRef.current.publish(topic, JSON.stringify({ name: currentUser.name }), { qos: 0 });
   };
 
-  // Reactions
   const handleSendReaction = (emoji: string) => {
     if (!currentUser || !clientRef.current) return;
     const x = Math.floor(Math.random() * 80) + 10;
@@ -740,7 +464,6 @@ export default function App() {
 
   return (
     <div id="app-root" className="min-h-screen flex flex-col bg-[#0a0815] text-white selection:bg-purple-600 selection:text-white overflow-hidden">
-      {/* Join Screen Modal */}
       {!joined && (
         <JoinModal
           initialRoom={roomName}
@@ -749,7 +472,6 @@ export default function App() {
         />
       )}
 
-      {/* MPV Built-In Player Hub & Control Center */}
       <MpvModal
         isOpen={isMpvModalOpen}
         onClose={() => setIsMpvModalOpen(false)}
@@ -773,25 +495,20 @@ export default function App() {
         onSelectBroker={handleSwitchBroker}
       />
 
-      {/* Main App Layout */}
       {joined && (
         <>
-          {/* Top Navbar */}
           <Navbar
             roomName={roomName}
             onlineCount={members.length}
             currentUser={currentUser}
-            brokerName={BROKERS[brokerId]?.badge || BROKERS[brokerId]?.name || 'Port 8999'}
+            brokerName={BROKERS[brokerId]?.badge || BROKERS[brokerId]?.name || 'Default'}
             onOpenMpv={() => setIsMpvModalOpen(true)}
             onSyncAll={handleForceSync}
             onLeaveRoom={handleLeaveRoom}
           />
 
-          {/* Body Content: Grid Layout */}
           <main className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 min-h-0 overflow-y-auto lg:overflow-hidden">
-            {/* Left Side: Video Player, URL Bar, Playlist Queue (col-span-7 or 8) */}
             <section className="lg:col-span-7 xl:col-span-8 flex flex-col gap-3 min-h-0 overflow-y-visible lg:overflow-y-auto no-scrollbar">
-              {/* URL Input Bar */}
               <div 
                 id="url-input-bar" 
                 className="p-2 sm:p-2.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md flex flex-wrap sm:flex-nowrap gap-2 items-center shadow-lg"
@@ -818,7 +535,7 @@ export default function App() {
                     className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md transition-all active:scale-95 flex items-center gap-1.5"
                   >
                     <Play className="w-3.5 h-3.5 fill-white" />
-                    <span>Play Sab Ke Liye</span>
+                    <span>Play</span>
                   </button>
 
                   <button
@@ -841,7 +558,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Video Player Viewport */}
               <VideoPlayer
                 currentMedia={currentMedia}
                 isPlaying={isPlaying}
@@ -874,7 +590,6 @@ export default function App() {
                 roomName={roomName}
               />
 
-              {/* Playlist & Queue Component */}
               <PlaylistQueue
                 items={queue}
                 currentIndex={queueIndex}
@@ -884,7 +599,6 @@ export default function App() {
               />
             </section>
 
-            {/* Right Side: Live Chat, Active Members (col-span-5 or 4) */}
             <aside className="lg:col-span-5 xl:col-span-4 flex flex-col h-[420px] sm:h-[480px] lg:h-full min-h-0 shrink-0 overflow-hidden">
               <ChatPanel
                 messages={messages}
