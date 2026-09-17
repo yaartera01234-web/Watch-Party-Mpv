@@ -38,7 +38,6 @@ import { PlaylistQueue } from './components/PlaylistQueue';
 import { ChatPanel } from './components/ChatPanel';
 import { JoinModal } from './components/JoinModal';
 import { MpvModal } from './components/MpvModal';
-import { InstallAppModal } from './components/InstallAppModal';
 import { APP_BROKERS } from './data/syncplayServers';
 
 const BROKERS: BrokerOption[] = APP_BROKERS;
@@ -75,7 +74,6 @@ export default function App() {
 
   // UI Modals & Toggles
   const [isMpvModalOpen, setIsMpvModalOpen] = useState(false);
-  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -748,7 +746,6 @@ export default function App() {
           initialRoom={roomName}
           brokers={BROKERS}
           onJoin={handleJoinParty}
-          onOpenInstallModal={() => setIsInstallModalOpen(true)}
         />
       )}
 
@@ -776,12 +773,6 @@ export default function App() {
         onSelectBroker={handleSwitchBroker}
       />
 
-      {/* Android PWA / APK Guide Modal */}
-      <InstallAppModal
-        isOpen={isInstallModalOpen}
-        onClose={() => setIsInstallModalOpen(false)}
-      />
-
       {/* Main App Layout */}
       {joined && (
         <>
@@ -792,7 +783,6 @@ export default function App() {
             currentUser={currentUser}
             brokerName={BROKERS[brokerId]?.badge || BROKERS[brokerId]?.name || 'Port 8999'}
             onOpenMpv={() => setIsMpvModalOpen(true)}
-            onOpenInstallModal={() => setIsInstallModalOpen(true)}
             onSyncAll={handleForceSync}
             onLeaveRoom={handleLeaveRoom}
           />

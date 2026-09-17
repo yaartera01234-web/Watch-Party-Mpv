@@ -29,12 +29,18 @@ public class MainActivity extends BridgeActivity {
             if (getBridge() != null && getBridge().getWebView() != null) {
                 WebView webView = getBridge().getWebView();
                 WebSettings settings = webView.getSettings();
-                // Allow media autoplay without user gesture
+                // Allow media autoplay without user gesture & allow direct MP4/HLS streaming
                 settings.setMediaPlaybackRequiresUserGesture(false);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                }
                 settings.setDomStorageEnabled(true);
                 settings.setDatabaseEnabled(true);
                 settings.setAllowFileAccess(true);
                 settings.setAllowContentAccess(true);
+                settings.setAllowFileAccessFromFileURLs(true);
+                settings.setAllowUniversalAccessFromFileURLs(true);
+                settings.setJavaScriptCanOpenWindowsAutomatically(true);
                 // Register Internal MPV Native Bridge
                 webView.addJavascriptInterface(new NativeMpvBridge(), "AndroidMpvBridge");
             }

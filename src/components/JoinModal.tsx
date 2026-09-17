@@ -9,8 +9,7 @@ import {
   MessageSquare, 
   RefreshCw, 
   ArrowRight,
-  ShieldCheck,
-  Download
+  ShieldCheck
 } from 'lucide-react';
 import { AvatarData, BrokerOption } from '../types';
 
@@ -254,17 +253,6 @@ export const JoinModal: React.FC<JoinModalProps> = ({
             <span>Party Me Enter Ho</span>
             <ArrowRight className="w-4 h-4" />
           </button>
-
-          {onOpenInstallModal && (
-            <button
-              type="button"
-              onClick={onOpenInstallModal}
-              className="w-full py-2 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-semibold text-emerald-300 flex items-center justify-center gap-2 transition-all"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Install on Android / APK Guide</span>
-            </button>
-          )}
         </form>
 
         {/* Feature tags */}

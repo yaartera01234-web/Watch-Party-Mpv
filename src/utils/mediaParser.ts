@@ -1,10 +1,13 @@
 import { MediaItem, MediaType } from '../types';
 
 export function parseMediaUrl(url: string): { type: MediaType; videoId?: string; cleanUrl: string } {
-  const trimmed = url.trim();
+  let trimmed = url.trim();
   if (!trimmed) {
     return { type: 'none', cleanUrl: '' };
   }
+
+  // Strip enclosing quotes, markdown, or angle brackets that can be copied on mobile
+  trimmed = trimmed.replace(/^[<"'\s]+|[>"'\s]+$/g, '').trim();
 
   // YouTube parser
   const ytMatch = trimmed.match(
@@ -35,6 +38,28 @@ export function parseMediaUrl(url: string): { type: MediaType; videoId?: string;
     // Not a valid standard URL, continue with regex checks
   }
 
+  // Google Drive direct stream converter
+  const gDriveMatch = trimmed.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/i);
+  if (gDriveMatch) {
+    return {
+      type: 'mp4',
+      cleanUrl: `https://drive.google.com/uc?export=download&id=${gDriveMatch[1]}`,
+    };
+  }
+
+  // Dropbox direct stream converter (dl=1 / raw=1)
+  if (trimmed.includes('dropbox.com')) {
+    const dropboxDirect = trimmed
+      .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+      .replace(/[?&]dl=0/, '')
+      .replace(/[?&]raw=1/, '');
+    const joiner = dropboxDirect.includes('?') ? '&' : '?';
+    return {
+      type: 'mp4',
+      cleanUrl: `${dropboxDirect}${joiner}raw=1`,
+    };
+  }
+
   // HLS stream (.m3u8)
   if (/\.m3u8(?:[?#]|$)/i.test(trimmed)) {
     return {
@@ -51,7 +76,7 @@ export function parseMediaUrl(url: string): { type: MediaType; videoId?: string;
     };
   }
 
-  // Default to MP4 / direct video
+  // Direct video files (.mp4, .m4v, .webm, .mov, .mkv, .ogv, .3gp) or fallback video URL
   return {
     type: 'mp4',
     cleanUrl: trimmed,

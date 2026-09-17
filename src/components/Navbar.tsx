@@ -7,8 +7,7 @@ import {
   RefreshCw, 
   Users, 
   LogOut, 
-  Sparkles,
-  Download 
+  Sparkles
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -20,7 +19,7 @@ interface NavbarProps {
   onOpenMpv: () => void;
   onSyncAll: () => void;
   onLeaveRoom: () => void;
-  onOpenInstallModal: () => void;
+  onOpenInstallModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -31,7 +30,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenMpv,
   onSyncAll,
   onLeaveRoom,
-  onOpenInstallModal,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -105,17 +103,6 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           <Tv className="w-3.5 h-3.5 text-purple-300" />
           <span className="hidden sm:inline">MPV Player</span>
-        </button>
-
-        {/* Install / APK button */}
-        <button
-          id="nav-install-btn"
-          onClick={onOpenInstallModal}
-          className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-900/30 transition-all hover:scale-105 active:scale-95"
-          title="Install on Android Phone / WebAPK & APK Guide"
-        >
-          <Download className="w-3.5 h-3.5 text-emerald-200" />
-          <span className="hidden sm:inline">Install App</span>
         </button>
 
         {/* Sync Button */}

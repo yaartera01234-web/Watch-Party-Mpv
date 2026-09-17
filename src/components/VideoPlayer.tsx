@@ -22,10 +22,14 @@ import {
   ChevronRight,
   StepBack,
   StepForward,
-  Headphones
+  Headphones,
+  AlertCircle,
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import { MediaItem, MediaType, ReactionEvent } from '../types';
 import { formatSeconds } from '../utils/mediaParser';
+import { openInMpvAndroid } from '../utils/androidIntent';
 import { AudioPlayer } from './AudioPlayer';
 import { FloatingReactions } from './FloatingReactions';
 
@@ -105,6 +109,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showMpvStats, setShowMpvStats] = useState<boolean>(false);
   const [osdMessage, setOsdMessage] = useState<string | null>(null);
   const osdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // MP4 & HLS Media Buffering, Error, and Autoplay States
+  const [videoLoading, setVideoLoading] = useState<boolean>(false);
+  const [videoError, setVideoError] = useState<{ message: string; code?: number } | null>(null);
+  const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
 
   // Touch Gesture HUD Overlay State
   const [gestureType, setGestureType] = useState<'brightness' | 'volume' | 'seek' | null>(null);
@@ -258,35 +267,156 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current = null;
     }
 
+    setVideoError(null);
+    setVideoLoading(true);
+    setIsAutoplayBlocked(false);
+
+    let isCancelled = false;
+
     if (mediaType === 'hls') {
       if (Hls.isSupported()) {
-        const hls = new Hls({ enableWorker: true });
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+        });
         hls.loadSource(currentMedia.url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          if (currentTime > 0) video.currentTime = currentTime;
-          if (isPlaying) video.play().catch(() => {});
+          if (isCancelled) return;
+          setVideoLoading(false);
+          if (currentTime > 0) {
+            try { video.currentTime = currentTime; } catch {}
+          }
+          if (isPlaying) {
+            video.play().catch((err) => {
+              console.warn("HLS autoplay caught:", err);
+              if (!isCancelled) setIsAutoplayBlocked(true);
+            });
+          }
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (isCancelled) return;
+          if (data.fatal) {
+            setVideoLoading(false);
+            setVideoError({
+              message: `HLS Stream Error: ${data.details || 'Unable to parse live stream'}`
+            });
+            triggerOsd(`[mpv] HLS Error: ${data.details || 'Network or parse failure'}`);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
         });
         hlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = currentMedia.url;
-        if (currentTime > 0) video.currentTime = currentTime;
-        if (isPlaying) video.play().catch(() => {});
+        video.load();
+        if (currentTime > 0) {
+          try { video.currentTime = currentTime; } catch {}
+        }
+        if (isPlaying) {
+          video.play().catch(() => setIsAutoplayBlocked(true));
+        }
       }
     } else {
-      // MP4 / WebM
+      // Direct MP4 / Video Stream
+      video.pause();
+      // Remove any forced crossOrigin so opaque cross-origin direct MP4s play without server CORS restrictions
+      video.removeAttribute('crossorigin');
       video.src = currentMedia.url;
-      if (currentTime > 0) video.currentTime = currentTime;
-      if (isPlaying) video.play().catch(() => {});
+      video.load();
+
+      const onLoadedMetadata = () => {
+        if (isCancelled) return;
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          setDuration(video.duration);
+        }
+        if (currentTime > 0) {
+          try { video.currentTime = currentTime; } catch {}
+        }
+      };
+
+      const onCanPlay = () => {
+        if (isCancelled) return;
+        setVideoLoading(false);
+        if (currentTime > 0 && Math.abs(video.currentTime - currentTime) > 1.0) {
+          try { video.currentTime = currentTime; } catch {}
+        }
+        if (isPlaying && video.paused) {
+          video.play()
+            .then(() => {
+              if (!isCancelled) setIsAutoplayBlocked(false);
+            })
+            .catch((err) => {
+              console.warn("MP4 direct play error:", err);
+              if (!isCancelled) setIsAutoplayBlocked(true);
+            });
+        }
+      };
+
+      const onWaiting = () => {
+        if (!isCancelled) setVideoLoading(true);
+      };
+
+      const onPlaying = () => {
+        if (!isCancelled) {
+          setVideoLoading(false);
+          setIsAutoplayBlocked(false);
+        }
+      };
+
+      const onError = () => {
+        if (isCancelled) return;
+        setVideoLoading(false);
+        const err = video.error;
+        let errMsg = "MP4 direct stream could not be loaded";
+        if (err) {
+          if (err.code === 1) errMsg = "Media loading was aborted";
+          else if (err.code === 2) errMsg = "Network error while downloading stream";
+          else if (err.code === 3) errMsg = "Video format / codec not supported by WebView";
+          else if (err.code === 4) errMsg = "Stream source not found or server blocked request (404/CORS)";
+        }
+        setVideoError({ message: errMsg, code: err?.code });
+        triggerOsd(`[mpv] Error: ${errMsg}`);
+      };
+
+      video.addEventListener('loadedmetadata', onLoadedMetadata);
+      video.addEventListener('canplay', onCanPlay);
+      video.addEventListener('waiting', onWaiting);
+      video.addEventListener('playing', onPlaying);
+      video.addEventListener('error', onError);
+
+      return () => {
+        isCancelled = true;
+        video.removeEventListener('loadedmetadata', onLoadedMetadata);
+        video.removeEventListener('canplay', onCanPlay);
+        video.removeEventListener('waiting', onWaiting);
+        video.removeEventListener('playing', onPlaying);
+        video.removeEventListener('error', onError);
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+      };
     }
 
     return () => {
+      isCancelled = true;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
     };
-  }, [currentMedia?.url, mediaType]);
+  }, [currentMedia?.url, mediaType, triggerOsd]);
 
   // Sync external changes (isPlaying, currentTime)
   useEffect(() => {
@@ -909,23 +1039,101 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* HTML5 / HLS Video tag with filter brightness & aspect ratio */}
       {(mediaType === 'mp4' || mediaType === 'hls') && (
-        <video
-          ref={videoRef}
-          playsInline
-          className="w-full h-full transition-all duration-150"
-          style={{
-            filter: `brightness(${localBrightness})`,
-            objectFit: aspectRatio === 'cover' ? 'cover' : 'contain',
-            aspectRatio: aspectRatio === '16/9' ? '16/9' : aspectRatio === '4/3' ? '4/3' : undefined,
-          }}
-          onEnded={onMediaEnd}
-          onPlay={() => {
-            if (!suppressEventsRef.current) onPlay(videoRef.current?.currentTime || 0);
-          }}
-          onPause={() => {
-            if (!suppressEventsRef.current) onPause(videoRef.current?.currentTime || 0);
-          }}
-        />
+        <>
+          <video
+            ref={videoRef}
+            playsInline
+            preload="auto"
+            className="w-full h-full transition-all duration-150"
+            style={{
+              filter: `brightness(${localBrightness})`,
+              objectFit: aspectRatio === 'cover' ? 'cover' : 'contain',
+              aspectRatio: aspectRatio === '16/9' ? '16/9' : aspectRatio === '4/3' ? '4/3' : undefined,
+            }}
+            onEnded={onMediaEnd}
+            onPlay={() => {
+              setIsAutoplayBlocked(false);
+              if (!suppressEventsRef.current) onPlay(videoRef.current?.currentTime || 0);
+            }}
+            onPause={() => {
+              if (!suppressEventsRef.current) onPause(videoRef.current?.currentTime || 0);
+            }}
+          />
+
+          {/* Buffering Indicator */}
+          {videoLoading && !videoError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[1px] pointer-events-none z-20">
+              <Loader2 className="w-9 h-9 text-purple-400 animate-spin mb-2" />
+              <span className="text-[11px] font-mono text-white/90 bg-black/70 px-3 py-1 rounded-full border border-white/10 shadow">
+                [mpv] Buffering Stream...
+              </span>
+            </div>
+          )}
+
+          {/* Autoplay Blocked / Tap to Start Overlay */}
+          {isAutoplayBlocked && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-25 p-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (videoRef.current) {
+                    videoRef.current.play().then(() => {
+                      setIsAutoplayBlocked(false);
+                      onPlay(videoRef.current?.currentTime || 0);
+                    }).catch(() => {});
+                  }
+                }}
+                className="px-6 py-3 rounded-2xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-purple-600/40 flex items-center gap-2 transition-transform active:scale-95 cursor-pointer"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                <span>Tap To Start Stream</span>
+              </button>
+              <p className="text-[11px] text-white/70 mt-2 font-mono">Mobile autoplay requires 1 tap</p>
+            </div>
+          )}
+
+          {/* Video Error / Codec / Network Fallback Overlay */}
+          {videoError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 z-25 p-4 text-center">
+              <div className="p-3 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 mb-2">
+                <AlertCircle className="w-7 h-7" />
+              </div>
+              <h4 className="text-sm font-bold text-white mb-1">Direct Stream Error</h4>
+              <p className="text-xs text-neutral-300 max-w-sm mb-4 font-mono leading-relaxed px-2">
+                {videoError.message}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVideoError(null);
+                    setVideoLoading(true);
+                    if (videoRef.current && currentMedia?.url) {
+                      videoRef.current.pause();
+                      videoRef.current.src = currentMedia.url;
+                      videoRef.current.load();
+                      videoRef.current.play().catch(() => {});
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow active:scale-95 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Retry Stream</span>
+                </button>
+                {currentMedia?.url && (
+                  <button
+                    type="button"
+                    onClick={() => openInMpvAndroid(currentMedia.url)}
+                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1.5 border border-white/20 active:scale-95 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open in MPV Android</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* MPV Top Header Bar (OSD) */}

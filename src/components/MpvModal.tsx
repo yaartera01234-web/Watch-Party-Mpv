@@ -19,8 +19,7 @@ import {
   Server,
   ExternalLink,
   ShieldCheck,
-  Radio,
-  Download
+  Radio
 } from 'lucide-react';
 import { SYNCPLAY_SERVERS, SyncplayServer } from '../data/syncplayServers';
 
