@@ -17,11 +17,13 @@ export class SyncplayClient {
     this.androidBridge = win?.AndroidSyncplayBridge;
     if (typeof window !== 'undefined') {
       const bind = (name: string, event: SyncplayEvent) => {
-        const handler: EventListener = (event) => {
-          const detail = (event as CustomEvent<string>).detail || '';
-          if (event.type === 'syncplay-connected') this.connected = true;
-          if (event.type === 'syncplay-disconnected' || event.type === 'syncplay-error') this.connected = false;
-          this.emit(event as SyncplayEvent, detail);
+        // NOTE: inner param MUST NOT be named `event` — it would shadow the
+        // SyncplayEvent string above and silently break all .on() callbacks.
+        const handler: EventListener = (domEvent) => {
+          const detail = (domEvent as CustomEvent<string>).detail || '';
+          if (domEvent.type === 'syncplay-connected') this.connected = true;
+          if (domEvent.type === 'syncplay-disconnected' || domEvent.type === 'syncplay-error') this.connected = false;
+          this.emit(event, detail);
         };
         window.addEventListener(name, handler);
         this.handlers.push([name, handler]);
