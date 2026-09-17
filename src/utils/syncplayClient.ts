@@ -55,6 +55,12 @@ export class SyncplayClient {
     return this;
   }
 
+  setPlaybackState(position: number, paused: boolean) {
+    const bridge = this.androidBridge || (typeof window !== 'undefined' ? (window as BrowserWindow).AndroidSyncplayBridge : undefined);
+    if (bridge && typeof bridge.setPlaybackState === 'function') bridge.setPlaybackState(position, paused);
+    return this;
+  }
+
   subscribe(_topics: string[] | string, _opts?: any) { return this; }
   publish(_topic: string, payload: string, _opts?: any) {
     const bridge = this.androidBridge || (typeof window !== 'undefined' ? (window as BrowserWindow).AndroidSyncplayBridge : undefined);
