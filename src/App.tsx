@@ -89,6 +89,8 @@ export default function App() {
   // Syncplay protocol state
   const lastPingRef = useRef<number | undefined>(undefined);
   const clientIgnRef = useRef(0);
+  // Har doosre user ki aakhri known playstate — keepalive-spam gate ke liye
+  const lastSyncPlayRef = useRef<Record<string, { position: number; paused: boolean }>>({});
   const playlistFilesRef = useRef<string[]>([]);
   const playlistIndexRef = useRef<number | null>(null);
   const hadConnectedRef = useRef(false);
@@ -221,14 +223,27 @@ export default function App() {
           }
           // setBy = jis ne change kiya. Sirf doosron ki changes apply karo (apni + routine pings nahi).
           if (ps.setBy && ps.setBy !== user.name) {
-            if (typeof ps.position === 'number') setCurrentTime(ps.position);
-            if (typeof ps.paused === 'boolean') setIsPlaying(!ps.paused);
-            setMessages((prev) => [...prev, {
-              id: generateMid(), senderId: 'system', name: 'System', color: '#38bdf8',
-              text: `🔄 ${ps.setBy} ${ps.paused ? '⏸️ pause kiya' : '▶️ play kiya'}${ps.doSeek ? ' (seek)' : ''}`,
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              isSystem: true,
-            }]);
+            // ANTI-SPAM / ANTI-HIJACK: server har client ki 1-second ping-pong
+            // keepalives bhi room mein relay karta hai (playstate ke saath).
+            // Agar state pichli message se nahi badli to kuch MAT karo —
+            // warna chat "pause kiya" pills se bhar jata hai aur player
+            // har second dusre bande ki position pe reset ho jata hai!
+            const pos = typeof ps.position === 'number' ? ps.position : 0;
+            const paused = !!ps.paused;
+            const prevState = lastSyncPlayRef.current[ps.setBy];
+            const unchanged = !!prevState && prevState.paused === paused
+              && Math.abs(prevState.position - pos) <= 2 && !ps.doSeek;
+            lastSyncPlayRef.current[ps.setBy] = { position: pos, paused };
+            if (!unchanged) {
+              if (typeof ps.position === 'number') setCurrentTime(ps.position);
+              if (typeof ps.paused === 'boolean') setIsPlaying(!ps.paused);
+              setMessages((prev) => [...prev, {
+                id: generateMid(), senderId: 'system', name: 'System', color: '#38bdf8',
+                text: `🔄 ${ps.setBy} ${ps.paused ? '⏸️ pause kiya' : '▶️ play kiya'}${ps.doSeek ? ' (seek)' : ''}`,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isSystem: true,
+              }]);
+            }
           }
         }
         // --- OFFICIAL CHAT: server ne room ka message relay kiya ---
@@ -322,6 +337,7 @@ export default function App() {
     setBrokerId(brokerIdx);
     setJoined(true);
     hadConnectedRef.current = false;
+    lastSyncPlayRef.current = {};
 
     try {
       localStorage.setItem('wp_prefs', JSON.stringify({
