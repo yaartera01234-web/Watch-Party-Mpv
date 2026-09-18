@@ -31,6 +31,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private boolean surfaceReady = false;
     private String pendingVideoUrl = null;
     private String pendingAudioUrl = null;
+    private String currentAudioUrl = null;
     private JsEmitter jsEmitter;
     private final SurfaceView surfaceView;
     private final Handler poll = new Handler(Looper.getMainLooper());
@@ -95,6 +96,20 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                     o.put("duration", dur);
                     if (jsEmitter != null) jsEmitter.emit("mpv-loaded", o.toString());
                 } catch (Throwable ignored) {}
+
+                // CRITICAL AUDIO FIX: Attach external audio stream as soon as video file finishes loading
+                if (currentAudioUrl != null && !currentAudioUrl.isEmpty()) {
+                    final String aUrl = currentAudioUrl;
+                    currentAudioUrl = null;
+                    try {
+                        Log.i(TAG, "Attaching external audio on MPV_EVENT_FILE_LOADED: " + aUrl);
+                        mpv.command(new String[]{"audio-add", aUrl, "select"});
+                        mpv.setPropertyString("aid", "auto");
+                        mpv.setPropertyBoolean("mute", false);
+                    } catch (Throwable t) {
+                        Log.e(TAG, "audio-add on MPV_EVENT_FILE_LOADED failed", t);
+                    }
+                }
 
                 emitTracks();
                 emitChapters();
@@ -220,16 +235,31 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         }
     }
 
-    private void loadNow(String videoUrl, String audioUrl) {
+        private void loadNow(String videoUrl, String audioUrl) {
         try {
             this.pendingVideoUrl = null;
             this.pendingAudioUrl = null;
-            this.mpv.command(new String[]{"loadfile", videoUrl, "replace"});
-            if (audioUrl != null && !audioUrl.trim().isEmpty() && !audioUrl.equals(videoUrl)) {
-                this.mpv.command(new String[]{"audio-add", audioUrl, "select"});
+            this.currentAudioUrl = (audioUrl != null && !audioUrl.trim().isEmpty() && !audioUrl.equals(videoUrl)) ? audioUrl.trim() : null;
+
+            boolean loadedWithOption = false;
+            if (this.currentAudioUrl != null) {
+                try {
+                    this.mpv.command(new String[]{"loadfile", videoUrl, "replace", "-1", "audio-file=" + this.currentAudioUrl});
+                    loadedWithOption = true;
+                    Log.i(TAG, "loadfile with audio-file option: " + videoUrl);
+                } catch (Throwable fallback) {
+                    Log.w(TAG, "loadfile option fallback: " + fallback.getMessage());
+                }
             }
+
+            if (!loadedWithOption) {
+                this.mpv.command(new String[]{"loadfile", videoUrl, "replace"});
+            }
+
             this.mpv.setPropertyString("vid", "auto");
-            Log.i(TAG, "loadfile: " + videoUrl + (audioUrl != null ? " + audio: " + audioUrl : ""));
+            this.mpv.setPropertyString("aid", "auto");
+            this.mpv.setPropertyBoolean("mute", false);
+            Log.i(TAG, "loadfile started: " + videoUrl + (this.currentAudioUrl != null ? " + audio: " + this.currentAudioUrl : ""));
         } catch (Throwable t) {
             Log.e(TAG, "loadfile failed", t);
             if (this.jsEmitter != null) {

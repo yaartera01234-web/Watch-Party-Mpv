@@ -172,11 +172,16 @@ public final class MediaResolver {
 
         // Best Audio Stream (for pairing with adaptive video stream)
         AudioStream bestAudio = null;
+        int bestAudioBitrate = -1;
         List<AudioStream> audios = info.getAudioStreams();
         if (audios != null && !audios.isEmpty()) {
             for (AudioStream a : audios) {
-                if (bestAudio == null || a.getAverageBitrate() > bestAudio.getAverageBitrate()) {
+                if (a == null || a.getContent() == null || a.getContent().trim().isEmpty()) continue;
+                int br = a.getAverageBitrate();
+                if (br <= 0) br = a.getBitrate();
+                if (bestAudio == null || br > bestAudioBitrate) {
                     bestAudio = a;
+                    bestAudioBitrate = br;
                 }
             }
         }
