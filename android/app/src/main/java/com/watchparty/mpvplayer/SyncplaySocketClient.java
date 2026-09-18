@@ -74,6 +74,7 @@ public class SyncplaySocketClient {
     private volatile boolean firstSyncNeeded = true;
     private volatile boolean speedChanged = false;
     private volatile String currentUsername = "";
+    private volatile Boolean lastAckPaused = null;
 
     public SyncplaySocketClient(Context context) {}
 
@@ -229,6 +230,17 @@ public class SyncplaySocketClient {
                     this.lastGlobalPaused = paused;
                     this.lastGlobalPosition = roomPosition;
 
+                    // SYNC FIX (tug-of-war): jab room state kisi DOOSRE user ne badli ho,
+                    // apni reported web-state ko foran room ke mutabiq seed kar do.
+                    // Warna agla ACK purani (stale) local position bhejta hai aur server ka
+                    // min(watchers) poore room ko wapas peeche kheench leta hai.
+                    boolean remoteChange = setBy != null && !setBy.isEmpty() && !setBy.equals(this.currentUsername);
+                    if (remoteChange && (doSeek || this.lastAckPaused == null || this.lastAckPaused != paused)) {
+                        this.lastWebPosition = roomPosition;
+                        this.lastWebPaused = paused;
+                    }
+                    this.lastAckPaused = paused;
+
                     SyncplayPlayerController pc = this.playerController;
                     boolean localHasMedia = (pc != null && pc.hasMedia()) || this.hasWebMedia;
                     double localPos = (pc != null && pc.hasMedia()) ? pc.getCurrentPosition() : this.lastWebPosition;
@@ -321,20 +333,16 @@ public class SyncplaySocketClient {
     private void sendStateAck(double serverTime, boolean hadPlaystate) {
         try {
             double now = System.currentTimeMillis() / 1000.0;
-            String ackPart = "";
             long ack = this.serverIgnoring;
             if (ack > 0) {
-                ackPart = ", \"server\": " + ack;
                 this.serverIgnoring = 0L;
-            }
-            if (this.clientIgnoring > 0) {
-                ackPart += ", \"client\": " + this.clientIgnoring;
             }
 
             SyncplayPlayerController pc = this.playerController;
             boolean hasMedia = (pc != null && pc.hasMedia()) || this.hasWebMedia;
             double pos;
             boolean paused;
+            boolean posKnown = true;
             if (hasMedia) {
                 pos = (pc != null && pc.hasMedia()) ? pc.getCurrentPosition() : this.lastWebPosition;
                 paused = (pc != null && pc.hasMedia()) ? pc.isPaused() : this.lastWebPaused;
@@ -345,18 +353,40 @@ public class SyncplaySocketClient {
             } else {
                 pos = 0.0;
                 paused = true;
+                posKnown = false;
             }
 
+            // SYNC FIX - Syncplay reference (protocols.py SyncClientProtocol.sendState):
+            // jab tak apni local change ka echo server se wapas na aa jaye, playstate
+            // bhejna BAND rakho. Warna hamari purani state room ko ulta kheenchti hai
+            // (server min(watchers) position leta hai) -> play/pause tug-of-war.
+            boolean clientIgnoreIsNotSet = (this.clientIgnoring == 0) || (ack > 0);
+
             StringBuilder sb = new StringBuilder();
-            sb.append("{\"State\": {\"ignoringOnTheFly\": {\"client\": ").append(this.clientIgnoring).append(ackPart).append("}");
-            if (hadPlaystate || hasMedia) {
-                sb.append(", \"playstate\": {\"position\": ").append(plainNumber(pos))
+            sb.append("{\"State\": {");
+            boolean wroteAny = false;
+            if (clientIgnoreIsNotSet && posKnown && (hadPlaystate || hasMedia)) {
+                sb.append("\"playstate\": {\"position\": ").append(plainNumber(pos))
                   .append(", \"paused\": ").append(paused)
                   .append(", \"doSeek\": false}");
+                wroteAny = true;
             }
-            sb.append(", \"ping\": {\"latencyCalculation\": ").append(plainNumber(serverTime))
+            if (wroteAny) sb.append(", ");
+            sb.append("\"ping\": {\"latencyCalculation\": ").append(plainNumber(serverTime))
               .append(", \"clientLatencyCalculation\": ").append(plainNumber(now))
-              .append(", \"clientRtt\": 0.0}}}");
+              .append(", \"clientRtt\": 0.0}");
+            // ignoringOnTheFly sirf tab bhejo jab koi counter live ho (reference behavior)
+            if (ack > 0 || this.clientIgnoring > 0) {
+                sb.append(", \"ignoringOnTheFly\": {");
+                boolean first = true;
+                if (ack > 0) { sb.append("\"server\": ").append(ack); first = false; }
+                if (this.clientIgnoring > 0) {
+                    if (!first) sb.append(", ");
+                    sb.append("\"client\": ").append(this.clientIgnoring);
+                }
+                sb.append("}");
+            }
+            sb.append("}}");
 
             writeRaw(sb.toString() + "\r\n");
         } catch (Exception ignored) {}

@@ -130,6 +130,17 @@ export class SyncplayClient {
     return this;
   }
 
+  /**
+   * SYNC FIX: native layer ko batao ke web player ke paas media hai ya nahi.
+   * Iske baghair native ACK "no media" samajh kar room position echo karta rehta
+   * hai aur web player ki asli position kabhi server tak nahi pohanchti.
+   */
+  setHasWebMedia(has: boolean) {
+    const bridge = this.getBridge();
+    if (bridge && typeof bridge.setHasWebMedia === 'function') bridge.setHasWebMedia(has);
+    return this;
+  }
+
   subscribe(_topics: string[] | string, _opts?: any) { return this; }
   publish(_topic: string, payload: string, _opts?: any) {
     const bridge = this.getBridge();

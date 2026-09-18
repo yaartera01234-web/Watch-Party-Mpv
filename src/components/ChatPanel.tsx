@@ -510,8 +510,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <button
             id="chat-send-btn"
             type="submit"
-            onClick={handleSend}
-            
+            /* DUPLICATE-MESSAGE FIX: yahan pehle onClick={handleSend} bhi tha.
+               type="submit" hone ki wajah se click par form ka onSubmit BHI
+               chalta hai -> handleSend() do baar -> har message chat mein
+               do martaba. Ab sirf form onSubmit handle karta hai. */
             className="p-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white shadow-md transition-all active:scale-95 shrink-0"
             title="Send Message"
           >

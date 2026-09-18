@@ -126,12 +126,33 @@ export default function App() {
     }
   }, []);
 
-  // Native keep-alive pong ko asal playback state dete raho (har 10s)
+  // SYNC FIX: Syncplay server har ~1s pe State poochta hai aur uska ACK
+  // hamesha ASAL live position leke jana chahiye. Pehle ye 10s ka tha —
+  // yaani 10 second tak native layer purani (stale) position ACK karta tha
+  // aur server ka min(watchers) poore room ko peeche kheench leta tha.
+  // Ab har 500ms pe asli <video>/MPV position native layer ko feed hoti hai.
   useEffect(() => {
     if (!joined) return;
     const t = setInterval(() => {
-      try { clientRef.current?.setPlaybackState(currentTime, !isPlaying); } catch { /* ignore */ }
-    }, 10000);
+      try {
+        const c = clientRef.current;
+        if (!c) return;
+        // Asal live position DOM se lo — React state ek tick peeche hota hai
+        let pos = currentTime;
+        let paused = !isPlaying;
+        const v = typeof document !== 'undefined'
+          ? (document.querySelector('video') as HTMLVideoElement | null)
+          : null;
+        if (v && Number.isFinite(v.duration) && v.duration > 0) {
+          pos = v.currentTime || 0;
+          paused = v.paused;
+          c.setHasWebMedia(true);
+        } else {
+          c.setHasWebMedia(false);
+        }
+        c.setPlaybackState(pos, paused);
+      } catch { /* ignore */ }
+    }, 500);
     return () => clearInterval(t);
   }, [joined, currentTime, isPlaying]);
 
