@@ -110,6 +110,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
 
         this.surfaceView = new SurfaceView(context);
         this.surfaceView.getHolder().addCallback(this);
+        this.surfaceView.getHolder().setFormat(PixelFormat.RGBX_8888);
         addView(this.surfaceView, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
         setVisibility(View.GONE);
@@ -126,6 +127,8 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             this.mpv.create(getContext().getApplicationContext());
 
             this.mpv.setOptionString("vo", "gpu");
+            this.mpv.setOptionString("gpu-context", "android");
+            this.mpv.setOptionString("opengl-es", "yes");
             this.mpv.setOptionString("force-window", "yes");
             this.mpv.setOptionString("hwdec", "auto-safe");
             this.mpv.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");

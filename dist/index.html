@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Watch Party & MPV Player</title>
     <meta name="description" content="Real-time synced Watch Party with built-in in-app MPV Player engine, hardware acceleration, gesture controls, and swipe-to-reply chat." />
     <meta name="theme-color" content="#0b0a16" />
@@ -20,7 +20,56 @@
     <script src="https://www.youtube.com/iframe_api"></script>
     <script type="module" crossorigin src="/assets/index-C7f45QkB.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DwOYReBa.css">
-  <link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+  <link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>  <style>
+    html, body {
+      width: 100vw !important;
+      height: 100vh !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      background-color: transparent !important;
+      overflow-x: hidden;
+    }
+    #root {
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+  </style>
+  <script>
+    (function() {
+      function submitChatIfActive() {
+        var inp = document.getElementById('chat-message-input');
+        var btn = document.getElementById('chat-send-btn');
+        if (inp && (document.activeElement === inp || (inp.value && inp.value.trim().length > 0)) && btn) {
+          btn.click();
+          return true;
+        }
+        return false;
+      }
+
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+          if (submitChatIfActive()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      }, true);
+
+      window.addEventListener('beforeinput', function(e) {
+        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+          if (submitChatIfActive()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      }, true);
+    })();
+  </script>
+</head>
   <body class="bg-[#0b0a16] text-white antialiased overflow-x-hidden">
     <div id="root"></div>
   </body>

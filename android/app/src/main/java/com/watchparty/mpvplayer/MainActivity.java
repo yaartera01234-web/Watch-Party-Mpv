@@ -41,14 +41,23 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setBackgroundDrawable(new ColorDrawable(WINDOW_BG));
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
         // Cutout fix: allow extending fully into display notch / camera cutouts (edge-to-edge)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            getWindow().setAttributes(lp);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(lp);
         }
+
+        try {
+            WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+            getWindow().getDecorView().setFitsSystemWindows(false);
+        } catch (Throwable ignored) {}
 
         this.syncplayBridge = new AndroidSyncplayBridge(this::dispatchSyncplayEvent);
         setupWebView();
@@ -59,6 +68,7 @@ public class MainActivity extends BridgeActivity {
             WebView webView = getBridge() == null ? null : getBridge().getWebView();
             if (webView == null) return;
 
+            webView.setFitsSystemWindows(false);
             webView.setBackgroundColor(0); // Transparent so native MPV underneath shows
             WebSettings settings = webView.getSettings();
             settings.setMediaPlaybackRequiresUserGesture(false);
@@ -87,6 +97,8 @@ public class MainActivity extends BridgeActivity {
         this.mpvPlayerView.setJsEmitter(this::dispatchSyncplayEvent);
 
         FrameLayout root = (FrameLayout) getWindow().getDecorView().findViewById(android.R.id.content);
+        root.setFitsSystemWindows(false);
+        root.setBackgroundColor(Color.TRANSPARENT);
         root.addView(this.mpvPlayerView, 0, new FrameLayout.LayoutParams(1, 1));
         this.mpvPlayerView.setVisibility(View.GONE);
         applySlotRect();
@@ -106,6 +118,8 @@ public class MainActivity extends BridgeActivity {
             lp.height = FrameLayout.LayoutParams.MATCH_PARENT;
             lp.leftMargin = 0;
             lp.topMargin = 0;
+            lp.rightMargin = 0;
+            lp.bottomMargin = 0;
             this.mpvPlayerView.setLayoutParams(lp);
             return;
         }
@@ -149,8 +163,12 @@ public class MainActivity extends BridgeActivity {
     private void applyImmersive(boolean immersive) {
         Window window = getWindow();
 
-        // 1. Cutout short edges
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        // 1. Cutout short edges (ALWAYS on API 30+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowManager.LayoutParams lp = window.getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            window.setAttributes(lp);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams lp = window.getAttributes();
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             window.setAttributes(lp);
