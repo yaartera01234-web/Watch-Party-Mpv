@@ -1,6 +1,7 @@
 package com.watchparty.mpvplayer;
 
 import android.app.PictureInPictureParams;
+import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -419,9 +420,25 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void mpvSetVolume(final int percent) {
             MainActivity.this.runOnUiThread(() -> {
-                if (MainActivity.this.mpvPlayerView != null) {
-                    MainActivity.this.mpvPlayerView.setVolume(percent);
-                }
+                try {
+                    int clamped = Math.max(0, Math.min(200, percent));
+                    android.media.AudioManager am = (android.media.AudioManager) MainActivity.this.getSystemService(Context.AUDIO_SERVICE);
+                    if (am != null) {
+                        int maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                        if (maxVol > 0) {
+                            int targetSystemVol;
+                            if (clamped <= 100) {
+                                targetSystemVol = Math.round((clamped / 100.0f) * maxVol);
+                            } else {
+                                targetSystemVol = maxVol;
+                            }
+                            am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, targetSystemVol, 0);
+                        }
+                    }
+                    if (MainActivity.this.mpvPlayerView != null) {
+                        MainActivity.this.mpvPlayerView.setVolume(clamped);
+                    }
+                } catch (Exception ignored) {}
             });
         }
 
