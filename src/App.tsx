@@ -103,6 +103,8 @@ export default function App() {
   const handleMediaEndRef = useRef<() => void>(() => { /* placeholder */ });
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const lastAvatarBroadcastRef = useRef<number>(0);
+  const sentAvatarsToRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     initAudioUnlock();
@@ -277,21 +279,36 @@ export default function App() {
         const msg = JSON.parse(typeof raw === 'string' ? raw : String(raw));
         if (msg && msg.List) {
           const roomData = msg.List[room] || Object.values(msg.List)[0] || {} as any;
+          const globalAvs = (typeof window !== 'undefined' ? (window as any).__wp_avatars : null) || {};
           const others: User[] = Object.keys(roomData)
             .filter((n) => n !== user.name)
-            .map((n, i) => ({
-              id: 'sp_' + n,
-              name: n,
-              color: COLORS[i % COLORS.length],
-              avatar: { type: 'letter' },
-              ts: Date.now(),
-            }));
+            .map((n) => {
+              const hash = [...String(n)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+              const av = globalAvs[n.toLowerCase()] || { type: 'letter' };
+              return {
+                id: 'sp_' + n,
+                name: n,
+                color: COLORS[hash % COLORS.length],
+                avatar: av,
+                ts: Date.now(),
+              };
+            });
           setMembers([user, ...others]);
+          if (others.length > 0 && typeof window !== 'undefined' && (window as any).__wp_broadcastAvatar) {
+            const now = Date.now();
+            if (now - lastAvatarBroadcastRef.current > 3000) {
+              lastAvatarBroadcastRef.current = now;
+              setTimeout(() => (window as any).__wp_broadcastAvatar(), 200);
+            }
+          }
         }
         // Server ne room mein daakhla confirm kiya
         if (msg && msg.Hello) {
           setMembers((prev) => (prev.some((m) => m.id === user.id) ? prev : [user, ...prev]));
           requestList();
+          if (typeof window !== 'undefined' && (window as any).__wp_broadcastAvatar) {
+            setTimeout(() => (window as any).__wp_broadcastAvatar(), 300);
+          }
         }
         // --- OFFICIAL PLAYBACK SYNC: kisi ne play/pause/seek kiya (State.playstate) ---
         if (msg && msg.State && msg.State.playstate) {
@@ -341,13 +358,63 @@ export default function App() {
         // --- OFFICIAL CHAT: server ne room ka message relay kiya ---
         if (msg && msg.Chat && msg.Chat.username && msg.Chat.username !== user.name) {
           const c = msg.Chat;
+          const rawMsg = (c.message || '').trim();
+
+          // 1. Invisible avatar handshake message
+          if (rawMsg.startsWith('::av::')) {
+            try {
+              const payload = JSON.parse(rawMsg.slice(6));
+              const sender = c.username;
+              if (sender && sender !== user.name) {
+                const av: AvatarData = {
+                  type: payload.t === 'upload' ? 'upload' : (payload.t === 'dicebear' ? 'dicebear' : 'letter'),
+                  url: payload.u || undefined,
+                  data: payload.u || undefined,
+                };
+                if (typeof window !== 'undefined') {
+                  (window as any).__wp_avatars = (window as any).__wp_avatars || {};
+                  (window as any).__wp_avatars[sender.toLowerCase()] = av;
+                }
+                setMembers((prev) =>
+                  prev.map((m) =>
+                    m.name.toLowerCase() === sender.toLowerCase() ? { ...m, avatar: av } : m
+                  )
+                );
+                // Reply with our own avatar if peer hasn't received it yet
+                const senderKey = sender.toLowerCase();
+                if (!sentAvatarsToRef.current[senderKey]) {
+                  sentAvatarsToRef.current[senderKey] = true;
+                  if (typeof window !== 'undefined' && (window as any).__wp_broadcastAvatar) {
+                    (window as any).__wp_broadcastAvatar();
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('Avatar parse error:', err);
+            }
+            return; // DO NOT show in chat!
+          }
+
+          // 2. Parse swipe-to-reply quote if present
+          let text = rawMsg;
+          let replyObj: { name: string; text: string } | null = null;
+          const replyMatch = rawMsg.match(/^↪️\s*([^:]+):\s*"([\s\S]*?)"\s*—\s*([\s\S]*)$/);
+          if (replyMatch) {
+            replyObj = {
+              name: replyMatch[1].trim(),
+              text: replyMatch[2].trim(),
+            };
+            text = replyMatch[3].trim();
+          }
+
           const hash = [...String(c.username)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
           const chatMsg: ChatMessage = {
             id: generateMid(),
             senderId: 'sp_' + c.username,
             name: c.username,
             color: COLORS[hash % COLORS.length],
-            text: c.message || '',
+            text,
+            reply: replyObj,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           };
           setMessages((prev) => [...prev, chatMsg]);
@@ -428,6 +495,21 @@ export default function App() {
     setJoined(true);
     hadConnectedRef.current = false;
     lastSyncPlayRef.current = {};
+
+    if (typeof window !== 'undefined') {
+      (window as any).__wp_myAvatar = avatar;
+      (window as any).__wp_avatars = (window as any).__wp_avatars || {};
+      (window as any).__wp_avatars[user.name.toLowerCase()] = avatar;
+      (window as any).__wp_broadcastAvatar = () => {
+        if (!clientRef.current) return;
+        const av = (window as any).__wp_myAvatar || avatar;
+        const avUrl = av.url || (av.type === 'dicebear' ? av.url : '') || (av.data?.startsWith('http') ? av.data : '');
+        const payload = { t: av.type, u: avUrl || '' };
+        try {
+          clientRef.current.publish('', SyncplayProtocol.chat('::av::' + JSON.stringify(payload)));
+        } catch {}
+      };
+    }
 
     try {
       localStorage.setItem('wp_prefs', JSON.stringify({
@@ -719,8 +801,10 @@ export default function App() {
 
     setMessages((prev) => [...prev, msg]);
     // Official Syncplay Chat: plain string. Custom JSON bhejne par server kick karta hai!
+    const cleanQuote = replyTo ? (replyTo.text || '').replace(/\r?\n/g, ' ').trim() : '';
+    const quotePreview = cleanQuote.length > 35 ? cleanQuote.slice(0, 32) + '...' : cleanQuote;
     const wireText = replyTo
-      ? `↪️ ${replyTo.name}: "${(replyTo.text || '').slice(0, 50)}" — ${text}`
+      ? `↪️ ${replyTo.name}: "${quotePreview}" — ${text}`
       : text;
     clientRef.current.publish('', SyncplayProtocol.chat(wireText));
   };

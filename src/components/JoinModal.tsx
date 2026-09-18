@@ -61,10 +61,40 @@ export const JoinModal: React.FC<JoinModalProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, sx, sy, size, size, 0, 0, 96, 96);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
           setAvatar({
             type: 'upload',
-            data: canvas.toDataURL('image/jpeg', 0.75),
+            data: dataUrl,
           });
+
+          // Upload to tmpfiles for remote peer sharing
+          canvas.toBlob(async (blob) => {
+            if (!blob) return;
+            try {
+              const formData = new FormData();
+              formData.append('file', blob, 'dp.jpg');
+              const res = await fetch('https://tmpfiles.org/api/v1/upload', {
+                method: 'POST',
+                body: formData,
+              });
+              const json = await res.json();
+              if (json && json.data && json.data.url) {
+                const directUrl = json.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+                setAvatar((prev) => ({
+                  ...prev,
+                  url: directUrl,
+                }));
+                if (typeof window !== 'undefined' && (window as any).__wp_myAvatar) {
+                  (window as any).__wp_myAvatar.url = directUrl;
+                  if ((window as any).__wp_broadcastAvatar) {
+                    (window as any).__wp_broadcastAvatar();
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('DP upload error:', err);
+            }
+          }, 'image/jpeg', 0.75);
         }
       };
       img.src = reader.result as string;
@@ -79,11 +109,9 @@ export const JoinModal: React.FC<JoinModalProps> = ({
   };
 
   const renderAvatarPreview = () => {
-    if (avatar.type === 'upload' && avatar.data) {
-      return <img src={avatar.data} alt="Avatar" className="w-full h-full object-cover" />;
-    }
-    if (avatar.type === 'dicebear' && avatar.url) {
-      return <img src={avatar.url} alt="Avatar" className="w-full h-full object-cover" />;
+    const imgSrc = avatar.data || avatar.url;
+    if (imgSrc) {
+      return <img src={imgSrc} alt="Avatar" className="w-full h-full object-cover" />;
     }
     const letter = (name.trim()[0] || '🎬').toUpperCase();
     return (

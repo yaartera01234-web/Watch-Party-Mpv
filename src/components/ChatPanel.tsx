@@ -113,7 +113,14 @@ const SwipeableMessage: React.FC<SwipeableMessageProps> = ({
     setOffsetX(0);
   };
 
-  const senderUser = members.find((m) => m.id === msg.senderId);
+  const globalAvs = (typeof window !== 'undefined' ? (window as any).__wp_avatars : null) || {};
+  const senderUser = members.find(
+    (m) => m.id === msg.senderId || m.name.toLowerCase() === msg.name.toLowerCase()
+  ) || {
+    name: msg.name,
+    color: msg.color,
+    avatar: globalAvs[msg.name.toLowerCase()] || { type: 'letter' },
+  };
 
   return (
     <div 
@@ -284,26 +291,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const renderAvatar = (user?: Partial<User>, fallbackName = '?', size = 30) => {
     const letter = (fallbackName[0] || '?').toUpperCase();
-    const avatar = user?.avatar;
+    const globalAvs = (typeof window !== 'undefined' ? (window as any).__wp_avatars : null) || {};
+    const avatar = user?.avatar || globalAvs[fallbackName.toLowerCase()];
     const bg = user?.color || '#a855f7';
+    const imgSrc = avatar?.url || avatar?.data;
 
-    if (avatar?.type === 'upload' && avatar.data) {
+    if (imgSrc) {
       return (
         <img
-          src={avatar.data}
+          src={imgSrc}
           alt={fallbackName}
-          className="rounded-full object-cover shrink-0"
+          className="rounded-full object-cover shrink-0 ring-1 ring-white/20"
           style={{ width: `${size}px`, height: `${size}px` }}
-        />
-      );
-    }
-    if (avatar?.type === 'dicebear' && avatar.url) {
-      return (
-        <img
-          src={avatar.url}
-          alt={fallbackName}
-          className="rounded-full bg-black/40 shrink-0"
-          style={{ width: `${size}px`, height: `${size}px` }}
+          loading="lazy"
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
         />
       );
     }
@@ -314,7 +317,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           width: `${size}px`,
           height: `${size}px`,
           backgroundColor: bg,
-          fontSize: `${Math.round(size * 0.45)}px`,
+          fontSize: `${Math.max(10, Math.round(size * 0.42))}px`,
         }}
       >
         {letter}
