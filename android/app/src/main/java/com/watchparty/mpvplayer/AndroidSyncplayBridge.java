@@ -2,42 +2,43 @@ package com.watchparty.mpvplayer;
 
 import android.util.Log;
 import android.webkit.JavascriptInterface;
-import com.watchparty.mpvplayer.SyncplaySocketClient;
 import org.json.JSONObject;
 
-/* loaded from: /home/user/watchparty/apk_extracted/classes6.dex */
 public final class AndroidSyncplayBridge {
     private static final String TAG = "AndroidSyncplayBridge";
     private final JsEventDispatcher eventDispatcher;
     private final SyncplaySocketClient socketClient = new SyncplaySocketClient(null);
 
-    /* loaded from: /home/user/watchparty/apk_extracted/classes6.dex */
     public interface JsEventDispatcher {
         void dispatch(String str, String str2);
     }
 
     public AndroidSyncplayBridge(JsEventDispatcher dispatcher) {
         this.eventDispatcher = dispatcher;
-        this.socketClient.addListener(new SyncplaySocketClient.SyncplayListener() { // from class: com.watchparty.mpvplayer.AndroidSyncplayBridge.1
-            @Override // com.watchparty.mpvplayer.SyncplaySocketClient.SyncplayListener
+        this.socketClient.addListener(new SyncplaySocketClient.SyncplayListener() {
+            @Override
             public void onConnected() {
                 Log.d(AndroidSyncplayBridge.TAG, "Syncplay connected");
                 AndroidSyncplayBridge.this.dispatchToJs("syncplay-connected", "");
             }
 
-            @Override // com.watchparty.mpvplayer.SyncplaySocketClient.SyncplayListener
+            @Override
             public void onMessage(String raw) {
-                Log.d(AndroidSyncplayBridge.TAG, "Syncplay message: " + raw);
                 AndroidSyncplayBridge.this.dispatchToJs("syncplay-message", raw);
             }
 
-            @Override // com.watchparty.mpvplayer.SyncplaySocketClient.SyncplayListener
+            @Override
+            public void onSyncAction(String json) {
+                AndroidSyncplayBridge.this.dispatchToJs("syncplay-sync-action", json);
+            }
+
+            @Override
             public void onError(String message) {
                 Log.e(AndroidSyncplayBridge.TAG, message);
                 AndroidSyncplayBridge.this.dispatchToJs("syncplay-error", message);
             }
 
-            @Override // com.watchparty.mpvplayer.SyncplaySocketClient.SyncplayListener
+            @Override
             public void onDisconnected() {
                 Log.d(AndroidSyncplayBridge.TAG, "Syncplay disconnected");
                 AndroidSyncplayBridge.this.dispatchToJs("syncplay-disconnected", "");
@@ -45,8 +46,11 @@ public final class AndroidSyncplayBridge {
         });
     }
 
-    /* JADX INFO: Access modifiers changed from: private */
-    public void dispatchToJs(String eventName, String payload) {
+    public void setPlayerController(SyncplaySocketClient.SyncplayPlayerController controller) {
+        this.socketClient.setPlayerController(controller);
+    }
+
+    private void dispatchToJs(String eventName, String payload) {
         try {
             if (this.eventDispatcher != null) {
                 this.eventDispatcher.dispatch(eventName, payload);
@@ -81,12 +85,29 @@ public final class AndroidSyncplayBridge {
     }
 
     @JavascriptInterface
+    public void setHasWebMedia(boolean has) {
+        this.socketClient.setHasWebMedia(has);
+    }
+
+    @JavascriptInterface
+    public void sendLocalState(double position, boolean paused, boolean doSeek) {
+        this.socketClient.sendLocalState(position, paused, doSeek);
+    }
+
+    @JavascriptInterface
     public void sendMessage(String topic, String payload) {
         if (payload == null || payload.trim().isEmpty()) {
             return;
         }
         try {
-            new JSONObject(payload);
+            JSONObject obj = new JSONObject(payload);
+            if (obj.has("State")) {
+                JSONObject st = obj.getJSONObject("State");
+                JSONObject ign = st.optJSONObject("ignoringOnTheFly");
+                if (ign != null && ign.has("client")) {
+                    this.socketClient.noteOutboundClientIgnore(ign.optLong("client", 0));
+                }
+            }
             this.socketClient.sendMessage(payload + "\r\n");
         } catch (Exception e) {
             Log.e(TAG, "Invalid Syncplay payload", e);

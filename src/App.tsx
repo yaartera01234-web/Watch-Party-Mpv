@@ -186,13 +186,22 @@ export default function App() {
     const onMpvResolving = () => {
       showStatus('🔍 Stream nikaali jaa rahi hai (native MPV)...', 4000);
     };
+    const onSyncAction = (e: any) => {
+      try {
+        const d = JSON.parse(e?.detail || '{}');
+        if (typeof d.position === 'number') setCurrentTime(d.position);
+        if (typeof d.paused === 'boolean') setIsPlaying(!d.paused);
+      } catch { /* ignore */ }
+    };
     window.addEventListener('mpv-state', onMpvState as EventListener);
     window.addEventListener('mpv-ended', onMpvEnded);
     window.addEventListener('mpv-resolving', onMpvResolving);
+    window.addEventListener('syncplay-sync-action', onSyncAction as EventListener);
     return () => {
       window.removeEventListener('mpv-state', onMpvState as EventListener);
       window.removeEventListener('mpv-ended', onMpvEnded);
       window.removeEventListener('mpv-resolving', onMpvResolving);
+      window.removeEventListener('syncplay-sync-action', onSyncAction as EventListener);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -308,13 +317,15 @@ export default function App() {
               && Math.abs(prevState.position - pos) <= 2 && !ps.doSeek;
             lastSyncPlayRef.current[ps.setBy] = { position: pos, paused };
             if (!unchanged) {
-              if (typeof ps.position === 'number') setCurrentTime(ps.position);
+              if (typeof ps.position === 'number') setCurrentTime(pos);
               if (typeof ps.paused === 'boolean') setIsPlaying(!ps.paused);
               // NATIVE MPV ko remote change batao (native mode mein)
               try {
                 const b = getNativeBridge();
                 if (b) {
-                  if (typeof ps.position === 'number' && ps.doSeek) b.mpvSeekTo(pos);
+                  if (typeof ps.position === 'number' && (ps.doSeek || paused || Math.abs(currentTime - pos) > 4)) {
+                    b.mpvSeekTo(pos);
+                  }
                   b.mpvPause(paused);
                 }
               } catch { /* ignore */ }

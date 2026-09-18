@@ -284,9 +284,55 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         if (paused) pause(); else play();
     }
 
+    public double getCurrentPosition() {
+        if (!this.coreReady || this.mpv == null) return 0.0;
+        try {
+            Double d = this.mpv.getPropertyDouble("time-pos");
+            return d != null ? d : 0.0;
+        } catch (Throwable ignored) {
+            return 0.0;
+        }
+    }
+
+    public double getDuration() {
+        if (!this.coreReady || this.mpv == null) return 0.0;
+        try {
+            Double d = this.mpv.getPropertyDouble("duration");
+            return d != null ? d : 0.0;
+        } catch (Throwable ignored) {
+            return 0.0;
+        }
+    }
+
+    public boolean isPaused() {
+        if (!this.coreReady || this.mpv == null) return true;
+        try {
+            Boolean b = this.mpv.getPropertyBoolean("pause");
+            return b != null ? b : true;
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    public boolean hasMedia() {
+        if (!this.coreReady || this.mpv == null) return false;
+        try {
+            Integer count = this.mpv.getPropertyInt("playlist-count");
+            return count != null && count > 0;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     public void seekTo(double seconds) {
         if (this.coreReady && this.mpv != null) {
-            try { this.mpv.command(new String[]{"seek", String.valueOf(seconds), "absolute"}); } catch (Throwable ignored) {}
+            try {
+                this.mpv.setPropertyDouble("time-pos", Math.max(0.0, seconds));
+            } catch (Throwable t) {
+                try {
+                    this.mpv.command(new String[]{"seek", String.valueOf(seconds), "absolute"});
+                } catch (Throwable ignored) {}
+            }
         }
     }
 

@@ -62,6 +62,63 @@ public class MainActivity extends BridgeActivity {
         } catch (Throwable ignored) {}
 
         this.syncplayBridge = new AndroidSyncplayBridge(this::dispatchSyncplayEvent);
+        this.syncplayBridge.setPlayerController(new SyncplaySocketClient.SyncplayPlayerController() {
+            @Override
+            public double getCurrentPosition() {
+                if (MainActivity.this.mpvPlayerView != null && MainActivity.this.mpvPlayerView.hasMedia()) {
+                    return MainActivity.this.mpvPlayerView.getCurrentPosition();
+                }
+                return 0.0;
+            }
+
+            @Override
+            public double getDuration() {
+                if (MainActivity.this.mpvPlayerView != null && MainActivity.this.mpvPlayerView.hasMedia()) {
+                    return MainActivity.this.mpvPlayerView.getDuration();
+                }
+                return 0.0;
+            }
+
+            @Override
+            public boolean isPaused() {
+                if (MainActivity.this.mpvPlayerView != null && MainActivity.this.mpvPlayerView.hasMedia()) {
+                    return MainActivity.this.mpvPlayerView.isPaused();
+                }
+                return true;
+            }
+
+            @Override
+            public boolean hasMedia() {
+                return MainActivity.this.mpvPlayerView != null && MainActivity.this.mpvPlayerView.hasMedia();
+            }
+
+            @Override
+            public void executeSeek(final double seconds) {
+                MainActivity.this.runOnUiThread(() -> {
+                    if (MainActivity.this.mpvPlayerView != null) {
+                        MainActivity.this.mpvPlayerView.seekTo(seconds);
+                    }
+                });
+            }
+
+            @Override
+            public void executePause(final boolean paused) {
+                MainActivity.this.runOnUiThread(() -> {
+                    if (MainActivity.this.mpvPlayerView != null) {
+                        MainActivity.this.mpvPlayerView.setPaused(paused);
+                    }
+                });
+            }
+
+            @Override
+            public void executeSpeed(final double speed) {
+                MainActivity.this.runOnUiThread(() -> {
+                    if (MainActivity.this.mpvPlayerView != null) {
+                        MainActivity.this.mpvPlayerView.setSpeed(speed);
+                    }
+                });
+            }
+        });
         setupWebView();
     }
 
