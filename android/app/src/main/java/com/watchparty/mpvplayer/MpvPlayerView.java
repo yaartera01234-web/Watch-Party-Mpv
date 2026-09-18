@@ -294,6 +294,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 this.mpv.setPropertyDouble("panscan", 0.0);
                 this.mpv.setPropertyString("keepaspect", "yes");
                 this.mpv.setPropertyString("video-aspect-override", "-1");
+            } else if (mode != null && (mode.contains("2.35") || mode.toLowerCase().contains("pan"))) {
+                this.mpv.setPropertyString("keepaspect", "yes");
+                this.mpv.setPropertyString("video-aspect-override", "2.35:1");
+                this.mpv.setPropertyDouble("panscan", 1.0);
             } else if (mode != null && !mode.isEmpty()) {
                 String normalized = mode.replace('/', ':');
                 this.mpv.setPropertyDouble("panscan", 0.0);
