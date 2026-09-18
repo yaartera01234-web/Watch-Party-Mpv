@@ -7,8 +7,8 @@ android {
         applicationId "com.watchparty.mpvplayer"
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -26,6 +26,9 @@ android {
         debug {
             minifyEnabled false
             debuggable true
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
         }
     }
     lint {
@@ -39,6 +42,7 @@ repositories {
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
     mavenCentral()
+    maven { url 'https://jitpack.io' }
 }
 
 dependencies {
@@ -47,6 +51,7 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "io.github.abdallahmehiz:mpv-android-lib:0.1.12"
+    implementation "com.github.TeamNewPipe:NewPipeExtractor:v0.26.5"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

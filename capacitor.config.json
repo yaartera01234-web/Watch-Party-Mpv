@@ -9,7 +9,7 @@
   "android": {
     "allowMixedContent": true,
     "captureInput": true,
-    "backgroundColor": "#0b0a16"
+    "backgroundColor": "#00000000"
   },
   "plugins": {
     "CapacitorCookies": {

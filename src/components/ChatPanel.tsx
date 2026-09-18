@@ -476,16 +476,29 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
 
         {/* Text input and send */}
-        <div className="flex items-center gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSend();
+          }}
+          className="flex items-center gap-2"
+        >
           <input
             id="chat-message-input"
             type="text"
+            enterKeyHint="send"
+            autoComplete="off"
             value={inputText}
             onChange={(e) => {
               setInputText(e.target.value);
               onTyping();
             }}
-            onKeyDown={handleKeyDown}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
             placeholder={replyTarget ? `Reply to ${replyTarget.name}...` : "Type a message (Swipe to reply)..."}
             maxLength={500}
             className="flex-1 bg-white/10 border border-white/15 rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-neutral-400 focus:outline-none focus:border-pink-500 transition-colors"
@@ -493,14 +506,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
           <button
             id="chat-send-btn"
+            type="submit"
             onClick={handleSend}
-            disabled={!inputText.trim()}
-            className="p-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white shadow-md transition-all active:scale-95"
+            
+            className="p-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white shadow-md transition-all active:scale-95 shrink-0"
             title="Send Message"
           >
             <Send className="w-4 h-4" />
           </button>
-        </div>
+        </form>
       </div>
     </div>
   );

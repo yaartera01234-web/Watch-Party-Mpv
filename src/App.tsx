@@ -94,6 +94,13 @@ export default function App() {
   const playlistFilesRef = useRef<string[]>([]);
   const playlistIndexRef = useRef<number | null>(null);
   const hadConnectedRef = useRef(false);
+  // STATUS PILL helper — har nayi call purani auto-hide timer cancel karti hai
+  // (purani 3s timer nayi message ko uda deti thi — stale-timer race fix!)
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // NATIVE MPV (yuroyami-style): re-open loop rokne ke liye last opened URL
+  const lastNativeUrlRef = useRef<string | null>(null);
+  // mpv-ended event -> latest handleMediaEnd (closure stale na ho)
+  const handleMediaEndRef = useRef<() => void>(() => { /* placeholder */ });
   const seenIdsRef = useRef<Set<string>>(new Set());
   const typingTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
@@ -125,6 +132,70 @@ export default function App() {
     }, 10000);
     return () => clearInterval(t);
   }, [joined, currentTime, isPlaying]);
+
+  /** Status pill ko dikhao ms ke liye — nayi call purani timer cancel karti hai */
+  const showStatus = useCallback((msg: string, ms = 3000) => {
+    setStatusMessage(msg);
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    statusTimerRef.current = setTimeout(() => setStatusMessage(null), ms);
+  }, []);
+
+  // ---- NATIVE MPV helpers ----
+  const getNativeBridge = () => {
+    try {
+      const w = window as any;
+      return typeof w.AndroidMpvBridge?.openMpv === 'function' ? w.AndroidMpvBridge : null;
+    } catch { return null; }
+  };
+
+  /** Media native MPV mein kholo. force=true pe same URL dobara bhi kholo (re-play intent) */
+  const openInNativeMpv = (url: string, force = false) => {
+    const b = getNativeBridge();
+    if (!b || !url) return;
+    if (!force && lastNativeUrlRef.current === url) return; // same URL dobara -> loop roko
+    lastNativeUrlRef.current = url;
+    try { b.openMpv(url); } catch { /* ignore */ }
+  };
+
+  /** LIVE input value — kuch Android IME/paste pe React state miss karti hai; DOM se seedha parho */
+  const getLiveUrlInput = () => {
+    try {
+      const el = document.getElementById('media-url-input') as HTMLInputElement | null;
+      return el && el.value ? el.value : urlInput;
+    } catch { return urlInput; }
+  };
+
+  // Native MPV events: state ticks / ended / resolving feedback
+  useEffect(() => {
+    const onMpvState = (e: any) => {
+      try {
+        const st = JSON.parse(e?.detail || '{}');
+        const pos = typeof st.position === 'number' ? st.position : 0;
+        const paused = !!st.paused;
+        setCurrentTime((prev) => {
+          // Chhoti drift ignore — warna har 500ms UI render storm
+          return Math.abs(prev - pos) > 1.5 ? pos : prev;
+        });
+        setIsPlaying((prev) => {
+          if (prev === !paused) return prev;
+          return !paused;
+        });
+      } catch { /* ignore */ }
+    };
+    const onMpvEnded = () => { try { handleMediaEndRef.current(); } catch { /* ignore */ } };
+    const onMpvResolving = () => {
+      showStatus('🔍 Stream nikaali jaa rahi hai (native MPV)...', 4000);
+    };
+    window.addEventListener('mpv-state', onMpvState as EventListener);
+    window.addEventListener('mpv-ended', onMpvEnded);
+    window.addEventListener('mpv-resolving', onMpvResolving);
+    return () => {
+      window.removeEventListener('mpv-state', onMpvState as EventListener);
+      window.removeEventListener('mpv-ended', onMpvEnded);
+      window.removeEventListener('mpv-resolving', onMpvResolving);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const generateMid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -162,6 +233,8 @@ export default function App() {
       const same = prev && prev.url === active.url && prev.videoId === active.videoId;
       if (same) return prev;
       setCurrentTime(0);
+      // NATIVE: remote user ne nayi cheez lagayi -> humein bhi native mein kholo
+      openInNativeMpv(active.url);
       return active;
     });
   };
@@ -237,6 +310,14 @@ export default function App() {
             if (!unchanged) {
               if (typeof ps.position === 'number') setCurrentTime(ps.position);
               if (typeof ps.paused === 'boolean') setIsPlaying(!ps.paused);
+              // NATIVE MPV ko remote change batao (native mode mein)
+              try {
+                const b = getNativeBridge();
+                if (b) {
+                  if (typeof ps.position === 'number' && ps.doSeek) b.mpvSeekTo(pos);
+                  b.mpvPause(paused);
+                }
+              } catch { /* ignore */ }
               setMessages((prev) => [...prev, {
                 id: generateMid(), senderId: 'system', name: 'System', color: '#38bdf8',
                 text: `🔄 ${ps.setBy} ${ps.paused ? '⏸️ pause kiya' : '▶️ play kiya'}${ps.doSeek ? ' (seek)' : ''}`,
@@ -280,11 +361,9 @@ export default function App() {
     syncplay.on('connect', () => {
       if (hadConnectedRef.current) {
         // Reconnect hua (net slow/cut ke baad)
-        setStatusMessage('✅ Reconnected! Sync wapas live hai');
-        setTimeout(() => setStatusMessage(null), 3500);
+        showStatus('✅ Reconnected! Sync wapas live hai', 3500);
       } else {
-        setStatusMessage(`Connected to ${broker.name} (${host}:${port})`);
-        setTimeout(() => setStatusMessage(null), 3500);
+        showStatus(`Connected to ${broker.name} (${host}:${port})`, 3500);
         if (soundEnabled) playJoinTune();
         confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
         hadConnectedRef.current = true;
@@ -305,7 +384,7 @@ export default function App() {
     syncplay.on('reconnecting', (info: any) => {
       const n = info?.attempt ?? 1;
       const max = info?.max ?? 15;
-      setStatusMessage(`🔄 Net cut gaya — auto-reconnect... (koshish ${n}/${max})`);
+      showStatus(`🔄 Net cut gaya — auto-reconnect... (koshish ${n}/${max})`);
     });
     syncplay.on('error', (err: any) => {
       const msg = err?.message || String(err);
@@ -450,12 +529,30 @@ export default function App() {
     }));
     // Native keep-alive pong ko bhi asal halat batao
     try { c.setPlaybackState(action === 'load' ? 0 : position, paused); } catch { /* ignore */ }
+    // NATIVE MPV ko bhi same command do (native mode mein video native player chal rahi hai)
+    try {
+      const b = getNativeBridge();
+      if (b) {
+        if (action === 'play') b.mpvPause(false);
+        else if (action === 'pause') b.mpvPause(true);
+        if (action === 'seek' || action === 'load' || action === 'sync') b.mpvSeekTo(action === 'load' ? 0 : position);
+      }
+    } catch { /* ignore */ }
   };
 
   const handleLoadMedia = () => {
-    if (!urlInput.trim()) return;
-    const parsed = parseMediaUrl(urlInput);
-    if (parsed.type === 'none') return;
+    // LIVE DOM fallback: kuch phones pe React state paste bhool jati hai — asal input se lo
+    const live = getLiveUrlInput();
+    // FEEDBACK FIRST: khamoshi maut hai — pehle user ko batao kya hua.
+    if (!live.trim()) {
+      showStatus('⚠️ Pehle link paste karein, Boss!', 2500);
+      return;
+    }
+    const parsed = parseMediaUrl(live);
+    if (parsed.type === 'none') {
+      showStatus('❌ Ye link samajh nahi aayi — YouTube ya direct video link paste karein', 3500);
+      return;
+    }
 
     const item: MediaItem = {
       type: parsed.type,
@@ -469,20 +566,42 @@ export default function App() {
     setCurrentMedia(item);
     setCurrentTime(0);
     setIsPlaying(true);
-    setUrlInput('');
+    // INPUT CLEAR MAT KARO — user ka link wahi rahega taake dobara Play dabane se re-play ho
+    // (pehle yahan setUrlInput('') tha isliye 2nd press pe "pehle link paste karo" ata tha)
 
     const newQueue = [item];
     setQueue(newQueue);
     setQueueIndex(0);
 
+    openInNativeMpv(parsed.cleanUrl, true); // force: same link ka re-play bhi chale
+
     broadcastCommand('load', { media: item, time: 0 });
     syncQueueToRoom(newQueue, 0);
+    showStatus(getNativeBridge() ? '🎬 Native MPV se play ho raha hai...' : `🎬 ${item.label} load hui`, 3000);
   };
 
+  // Media khatam/clear ho to native player bhi band karo (warna overlay screen pe latka rehta)
+  useEffect(() => {
+    if (!currentMedia) {
+      try {
+        const w = window as any;
+        if (typeof w.AndroidMpvBridge?.closeMpv === 'function') w.AndroidMpvBridge.closeMpv();
+      } catch { /* ignore */ }
+      lastNativeUrlRef.current = null;
+    }
+  }, [currentMedia]);
+
   const handleAddToQueue = () => {
-    if (!urlInput.trim()) return;
-    const parsed = parseMediaUrl(urlInput);
-    if (parsed.type === 'none') return;
+    const live = getLiveUrlInput();
+    if (!live.trim()) {
+      showStatus('⚠️ Pehle link paste karein, Boss!', 2500);
+      return;
+    }
+    const parsed = parseMediaUrl(live);
+    if (parsed.type === 'none') {
+      showStatus('❌ Ye link samajh nahi aayi — YouTube ya direct video link paste karein', 3500);
+      return;
+    }
 
     const item: MediaItem = {
       type: parsed.type,
@@ -501,13 +620,15 @@ export default function App() {
       setCurrentTime(0);
       setIsPlaying(true);
       broadcastCommand('load', { media: item, time: 0 });
+      openInNativeMpv(parsed.cleanUrl);
     }
 
     setQueue(newQueue);
     setQueueIndex(newIndex);
-    setUrlInput('');
+    // Input clear mat karo — link wahin rahe taake Queue ke baad seedha Play bhi dabaa sake
 
     syncQueueToRoom(newQueue, newIndex);
+    showStatus(`➕ Queue mein add hui: ${item.label}`, 2500);
   };
 
   const handlePlayQueueIndex = (index: number) => {
@@ -517,6 +638,7 @@ export default function App() {
     setCurrentMedia(item);
     setCurrentTime(0);
     setIsPlaying(true);
+    openInNativeMpv(item.url);
     broadcastCommand('load', { media: item, time: 0 });
 
     syncQueueToRoom(queue, index);
@@ -547,6 +669,7 @@ export default function App() {
       setIsPlaying(false);
     }
   };
+  handleMediaEndRef.current = handleMediaEnd;
 
   const handleForceSync = () => {
     if (!currentMedia) return;
@@ -619,6 +742,12 @@ export default function App() {
   };
 
   const handleLeaveRoom = () => {
+    // Native MPV bhi band karo (warna purani video screen pe chipki rehti)
+    try {
+      const w = window as any;
+      if (typeof w.AndroidMpvBridge?.closeMpv === 'function') w.AndroidMpvBridge.closeMpv();
+    } catch { /* ignore */ }
+    lastNativeUrlRef.current = null;
     if (clientRef.current && currentUser) {
       clientRef.current.end(true);
     }
@@ -782,6 +911,18 @@ export default function App() {
             </aside>
           </main>
         </>
+      )}
+
+      {/* STATUS PILL — setStatusMessage 23 jagah call hota tha magar KAHIN render nahi
+          hota tha! (isliye "kuch response nahi ata" jaisa lagta tha). Ab sab dikhta hai:
+          Connected / Net cut gaya / feedback / load confirmations — sab upar floating. */}
+      {statusMessage && (
+        <div
+          id="status-pill"
+          className="fixed top-3.5 left-1/2 -translate-x-1/2 z-[999] px-4 py-2 rounded-full bg-black/85 border border-purple-400/40 text-white text-xs font-semibold shadow-2xl shadow-purple-950/50 backdrop-blur-md max-w-[92vw] text-center pointer-events-none"
+        >
+          {statusMessage}
+        </div>
       )}
     </div>
   );

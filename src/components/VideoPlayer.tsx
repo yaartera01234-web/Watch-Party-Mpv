@@ -116,6 +116,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [videoError, setVideoError] = useState<{ message: string; code?: number } | null>(null);
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
 
+  // ---- NATIVE MPV mode (yuroyami-style libmpv) ----
+  // Android mein native bridge hai to video NATIVE mpv mein chalti hai (MKV/HEVC bhi);
+  // web players tab sirf fallback hain (native fail ho ya user "Web" pe switch kare).
+  const nativeBridge = (() => {
+    try {
+      const w = window as any;
+      return typeof w.AndroidMpvBridge?.openMpv === 'function' ? w.AndroidMpvBridge : null;
+    } catch { return null; }
+  })();
+  const [nativeBypass, setNativeBypass] = useState<boolean>(false); // user ne "Web player" maanga ya native fail
+  // NATIVE FULLSCREEN: mpv overlay poori screen pe (user ki report: fullscreen ka option hi nahi tha)
+  const [nativeFullscreen, setNativeFullscreen] = useState<boolean>(false);
+  const nativeFullscreenRef = useRef<boolean>(false);
+  const toggleNativeFullscreen = useCallback(() => {
+    const next = !nativeFullscreenRef.current;
+    nativeFullscreenRef.current = next;
+    setNativeFullscreen(next);
+  }, []);
+  const nativeSlotRef = useRef<HTMLDivElement | null>(null);
+  const mediaTypeNative: MediaType = currentMedia?.type || 'none';
+  const nativeActive = !!nativeBridge && mediaTypeNative !== 'none' && !nativeBypass;
+
   // Touch Gesture HUD Overlay State
   const [gestureType, setGestureType] = useState<'brightness' | 'volume' | 'seek' | null>(null);
   const [gestureValue, setGestureValue] = useState<number>(0);
@@ -166,8 +188,98 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 2200);
   }, []);
 
+  // Naye media pe web-fallback reset (nayi URL native ke paas dobara jayegi)
+  useEffect(() => {
+    setNativeBypass(false);
+  }, [currentMedia?.url, currentMedia?.videoId]);
+
+  // Native MPV events -> loading/error states (App mpv-state/mpv-ended khud sambhalti hai)
+  useEffect(() => {
+    const onResolving = () => setVideoLoading(true);
+    const onLoaded = () => setVideoLoading(false);
+    const onFailed = () => {
+      setVideoLoading(false);
+      setNativeBypass(true); // native fail -> web player pe fallback
+      triggerOsd('Native MPV fail — web player se koshish...');
+    };
+    window.addEventListener('mpv-resolving', onResolving);
+    window.addEventListener('mpv-resolved', onLoaded);
+    window.addEventListener('mpv-loading', onResolving);
+    window.addEventListener('mpv-loaded', onLoaded);
+    window.addEventListener('mpv-failed', onFailed);
+    return () => {
+      window.removeEventListener('mpv-resolving', onResolving);
+      window.removeEventListener('mpv-resolved', onLoaded);
+      window.removeEventListener('mpv-loading', onResolving);
+      window.removeEventListener('mpv-loaded', onLoaded);
+      window.removeEventListener('mpv-failed', onFailed);
+    };
+  }, [triggerOsd]);
+
+  // Native slot ka rect native layer ko bhejo (CSS px) — taake mpv view bilkul isi jagah dikhe
+  useEffect(() => {
+    if (!nativeActive || !nativeBridge) return;
+    const sendRect = () => {
+      // Fullscreen mode: slot rect ki jagah poori screen ka rect bhejo
+      if (nativeFullscreenRef.current) {
+        try {
+          nativeBridge.mpvSetRect(0, 0, Math.round(window.innerWidth), Math.round(window.innerHeight));
+        } catch { /* ignore */ }
+        return;
+      }
+      const el = nativeSlotRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      try {
+        nativeBridge.mpvSetRect(Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height));
+      } catch { /* ignore */ }
+    };
+    // Pehli layout ke liye double-rAF + quick re-shots (soft keyboard/immersive shift cover)
+    sendRect();
+    let raf1 = 0, raf2 = 0;
+    raf1 = requestAnimationFrame(() => { sendRect(); raf2 = requestAnimationFrame(sendRect); });
+    const t1 = setTimeout(sendRect, 300);
+    const iv = setInterval(sendRect, 800);
+    window.addEventListener('resize', sendRect);
+    window.addEventListener('scroll', sendRect, true);
+    (window as any).visualViewport?.addEventListener('resize', sendRect);
+    document.addEventListener('visibilitychange', sendRect);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(t1);
+      clearInterval(iv);
+      window.removeEventListener('resize', sendRect);
+      window.removeEventListener('scroll', sendRect, true);
+      (window as any).visualViewport?.removeEventListener('resize', sendRect);
+      document.removeEventListener('visibilitychange', sendRect);
+    };
+  }, [nativeActive, nativeBridge, nativeFullscreen]);
+
+  // BACK button hook (Android): fullscreen band karo, warna normal behavior. false = "maine handle nahi kiya"
+  useEffect(() => {
+    (window as any).__mpvBack = () => {
+      if (nativeFullscreenRef.current) {
+        nativeFullscreenRef.current = false;
+        setNativeFullscreen(false);
+        return true;
+      }
+      return false;
+    };
+    return () => { try { delete (window as any).__mpvBack; } catch { /* ignore */ } };
+  }, []);
+
+  // media hat gayi/native band -> fullscreen bhi reset
+  useEffect(() => {
+    if (!nativeActive && nativeFullscreenRef.current) {
+      nativeFullscreenRef.current = false;
+      setNativeFullscreen(false);
+    }
+  }, [nativeActive]);
+
   // Handle YouTube player initialization
   useEffect(() => {
+    if (nativeActive) return; // native mode mein web YouTube bilkul nahi chalti
     if (mediaType !== 'youtube' || !currentMedia?.videoId) return;
 
     let isDestroyed = false;
@@ -298,10 +410,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       isDestroyed = true;
     };
-  }, [currentMedia?.videoId, mediaType, triggerOsd]);
+  }, [currentMedia?.videoId, mediaType, triggerOsd, nativeActive]);
 
   // Handle HLS and MP4 Video
   useEffect(() => {
+    if (nativeActive) return; // native mode mein web <video> nahi — MPV khud chala raha hai
     if (mediaType !== 'mp4' && mediaType !== 'hls') return;
     const video = videoRef.current;
     if (!video || !currentMedia?.url) return;
@@ -461,7 +574,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsRef.current = null;
       }
     };
-  }, [currentMedia?.url, mediaType, triggerOsd]);
+  }, [currentMedia?.url, mediaType, triggerOsd, nativeActive]);
 
   // Sync external changes (isPlaying, currentTime)
   useEffect(() => {
@@ -1045,6 +1158,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const remainingTimeSeconds = Math.max(0, duration - localTime);
 
   return (
+    <>
     <div
       ref={containerRef}
       id="video-player-viewport"
@@ -1075,11 +1189,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* YouTube slot with MPV overlay */}
-      <div 
-        ref={ytWrapperRef} 
-        id="yt-wrapper-container" 
-        className={`w-full h-full ${mediaType === 'youtube' ? 'block' : 'hidden'}`}
+      {/* NATIVE MPV SLOT — isi jagah native MPV view overlay hota hai (yuroyami style) */}
+      {nativeActive && (
+          <div
+            ref={nativeSlotRef}
+            id="native-video-slot"
+            className="w-full h-full bg-black"
+          >
+            {/* native MPV view isi rect ke UPAR render hoti hai — web content yahan dikhta nahi */}
+          </div>
+        )}
+
+      {/* YouTube slot with MPV overlay (native mode mein hidden) */}
+      <div
+        ref={ytWrapperRef}
+        id="yt-wrapper-container"
+        className={`w-full h-full ${mediaType === 'youtube' && !nativeActive ? 'block' : 'hidden'}`}
         style={{ filter: `brightness(${localBrightness})` }}
       />
 
@@ -1088,7 +1213,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ref={videoRef}
         playsInline
         preload="auto"
-        className={`w-full h-full transition-all duration-150 ${(mediaType === 'mp4' || mediaType === 'hls') ? 'block' : 'hidden'}`}
+        className={`w-full h-full transition-all duration-150 ${(mediaType === 'mp4' || mediaType === 'hls') && !nativeActive ? 'block' : 'hidden'}`}
         style={{
           filter: `brightness(${localBrightness})`,
           objectFit: aspectRatio === 'cover' ? 'cover' : 'contain',
@@ -1104,8 +1229,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }}
       />
 
-      {/* Buffering Indicator for MP4 / HLS */}
-      {(mediaType === 'mp4' || mediaType === 'hls') && videoLoading && !videoError && (
+      {/* Buffering Indicator for MP4 / HLS (+ native mpv resolving) */}
+      {(mediaType === 'mp4' || mediaType === 'hls' || nativeActive) && videoLoading && !videoError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[1px] pointer-events-none z-20">
           <Loader2 className="w-9 h-9 text-purple-400 animate-spin mb-2" />
           <span className="text-[11px] font-mono text-white/90 bg-black/70 px-3 py-1 rounded-full border border-white/10 shadow">
@@ -1642,5 +1767,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
     </div>
+
+    {/* NATIVE CONTROLS BAR — container ke BAHAR (native view slot ko dhak leti hai, isliye buttons inside slot kaam nahi karte) */}
+    {nativeActive && !nativeFullscreen && (
+      <div id="mpv-native-controls" className="mt-2 flex items-center justify-center gap-2">
+        <button
+          type="button"
+          id="mpv-fullscreen-btn"
+          onClick={toggleNativeFullscreen}
+          className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-purple-600/80 hover:bg-purple-500 border border-purple-400/50 px-3 py-1.5 rounded-lg active:scale-95 transition"
+          title="Poori screen pe khelein (wapis ke liye phone ka Back dabayen)"
+        >
+          ⛶ Fullscreen
+        </button>
+        <button
+          type="button"
+          id="mpv-web-switch-btn"
+          onClick={() => {
+            try { nativeBridge?.closeMpv(); } catch { /* ignore */ }
+            setNativeBypass(true);
+            triggerOsd('[web] Web player pe switch');
+          }}
+          className="flex items-center gap-1.5 text-[11px] font-bold text-white/80 bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-1.5 rounded-lg active:scale-95 transition"
+          title="Web player pe switch karein"
+        >
+          🔁 Web
+        </button>
+        <span className="text-[10px] text-white/40">tap video = play/pause</span>
+      </div>
+    )}
+    </>
   );
 };
