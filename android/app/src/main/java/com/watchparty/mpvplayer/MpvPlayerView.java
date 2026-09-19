@@ -421,6 +421,32 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         if (paused) pause(); else play();
     }
 
+    /**
+     * V80 LOCAL FILE: SAF uri ko fd:// ke zariye mpv mein load karo.
+     * mpv isi process mein hai is liye raw fd chal jata hai. Purana fd
+     * 3s baad close hota hai taake mpv ka unload safe ho.
+     */
+    private android.os.ParcelFileDescriptor localPfd;
+
+    public void openLocal(android.net.Uri uri) {
+        try {
+            if (!this.coreReady || this.mpv == null) return;
+            android.os.ParcelFileDescriptor pfd =
+                    getContext().getContentResolver().openFileDescriptor(uri, "r");
+            if (pfd == null) return;
+            int fd = pfd.getFd();
+            this.mpv.command(new String[]{"loadfile", "fd://" + fd, "replace"});
+            final android.os.ParcelFileDescriptor old = this.localPfd;
+            this.localPfd = pfd;
+            if (old != null) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                        () -> { try { old.close(); } catch (Throwable ignored) {} }, 3000);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "openLocal failed", t);
+        }
+    }
+
     public double getCurrentPosition() {
         if (!this.coreReady || this.mpv == null) return 0.0;
         try {

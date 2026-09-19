@@ -2,14 +2,18 @@ package com.watchparty.mpvplayer;
 
 import android.app.PictureInPictureParams;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.util.Log;
 import android.util.Rational;
 import android.view.View;
@@ -28,6 +32,7 @@ import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "WatchPartyNative";
+    static final int REQ_LOCAL_FILE = 4211; // V80 local file picker
     private static final int WINDOW_BG = 0xFF0B0A16; // #0b0a16
     private MpvPlayerView mpvPlayerView;
     private AndroidSyncplayBridge syncplayBridge;
@@ -129,6 +134,39 @@ public class MainActivity extends BridgeActivity {
         setupWebView();
     }
 
+
+    /**
+     * V80 LOCAL FILE: picker se aayi file mpv mein load karo + room ko
+     * maujuda CHAT path se inform karo (sync protocol mein zero change).
+     * Dost ke paas same file ho to wo apne 📁 button se load karta hai;
+     * size match check chat text mein hota hai.
+     */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_LOCAL_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        final Uri uri = data.getData();
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {}
+        String name = "local-file";
+        long size = -1L;
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int i1 = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int i2 = c.getColumnIndex(OpenableColumns.SIZE);
+                if (i1 >= 0 && c.getString(i1) != null) name = c.getString(i1);
+                if (i2 >= 0) size = c.getLong(i2);
+            }
+        } catch (Exception ignored) {}
+        this.ensureMpvCreated();
+        if (this.mpvPlayerView != null) this.mpvPlayerView.openLocal(uri);
+        try {
+            String sz = size > 0 ? String.format(java.util.Locale.US, " (%.1f MB)", size / 1048576.0) : "";
+            String msg = "\uD83D\uDCC1 Local file: " + name + sz + " -- same file hai to \uD83D\uDCC1 button se load karo";
+            this.syncplayBridge.sendMessage("", new JSONObject().put("Chat", msg).toString());
+        } catch (Exception ignored) {}
+    }
 
     private void setupWebView() {
         try {
@@ -406,6 +444,23 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void setPlayingState(boolean playing) {
             MainActivity.this.isVideoPlaying = playing;
+        }
+
+        /**
+         * V80 LOCAL FILE: SAF picker kholo. Sync layer bilkul untouched --
+         * file load hote hi mpv media ban jata hai aur maujuda sync rules
+         * (jo perfect chal rahe hain) waise hi lagu rehte hain.
+         */
+        @JavascriptInterface
+        public void openLocalPicker() {
+            MainActivity.this.runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("video/*");
+                    MainActivity.this.startActivityForResult(intent, MainActivity.REQ_LOCAL_FILE);
+                } catch (Exception ignored) {}
+            });
         }
 
         @JavascriptInterface
