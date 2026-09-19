@@ -43,18 +43,6 @@ import { APP_BROKERS } from './data/syncplayServers';
 
 const BROKERS: BrokerOption[] = APP_BROKERS;
 
-/**
- * SLOW-PEER PRIORITY thresholds — SyncplaySocketClient.java ke bilkul barabar
- * (Syncplay reference constants.py / yuroyami SyncDecision.kt).
- * MPV pe pehli priority Java side handle karta hai; web player yahi rule mirror karta hai.
- */
-const SLOWDOWN_THRESHOLD = 1.5;   // 1.5s aagay -> khud ko dheema karo
-const SLOWDOWN_RESET = 0.1;       // 0.1s ke andar -> normal raftaar
-const SLOWDOWN_RATE = 0.95;       // Syncplay standard throttle
-const BEHIND_HARD_SEEK = 4.0;     // 4s se zyada peechay -> aakhri chara: seek
-const REWIND_THRESHOLD = 4.0;     // 4s se zyada AAGAY -> tez peer khud peechay aaye
-const FASTFORWARD_EXTRA = 0.25;
-
 const COLORS = [
   '#ec4899', '#f43f5e', '#a855f7', '#8b5cf6', '#6366f1',
   '#3b82f6', '#06b6d4', '#10b981', '#84cc16', '#eab308', '#f97316'
@@ -118,35 +106,6 @@ export default function App() {
   const lastAvatarBroadcastRef = useRef<number>(0);
   const sentAvatarsToRef = useRef<Record<string, boolean>>({});
 
-  /* ══ READINESS GATE ══════════════════════════════════════════════════
-   * Asli Syncplay / yuroyami ka tareeqa: media load hote hi play NAHI karte.
-   * Pehle har member buffer kar ke "ready" hota hai, jab SAB tayyar hon
-   * tab playback shuru hoti hai. Isi liye wahan sab ek saath start hote hain.
-   * MPV FIRST: native buffering signal (paused-for-cache) asal source hai. */
-  const [isSelfReady, setIsSelfReady] = useState(false);
-  const [waitingForReady, setWaitingForReady] = useState(false);
-  /** SLOW-PEER PRIORITY: jab hum tez hain aur 0.95x pe throttle ho rahe hain */
-  const [syncSpeedNotice, setSyncSpeedNotice] = useState<string | null>(null);
-  const webSpeedChangedRef = useRef(false);
-  const rewindNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sentReadyRef = useRef<boolean | null>(null);
-  const readyGateRef = useRef(false);
-  const readyGateStartRef = useRef(0);
-  const isLoaderRef = useRef(false);
-  const isSelfReadyRef = useRef(false);
-  // Native MPV ne file khol li (duration mil gayi) aur cache-buffering band hai
-  const nativeMediaOpenRef = useRef(false);
-  const nativeBufferingRef = useRef(false);
-  // Helpers apni definition se pehle call hote hain — refs mein rakho
-  const broadcastCommandRef = useRef<((action: string, extra?: Record<string, any>) => void) | null>(null);
-  const showStatusRef = useRef<((msg: string, ms?: number) => void) | null>(null);
-  const getNativeBridgeRef = useRef<(() => any) | null>(null);
-  const publishReadyRef = useRef<((ready: boolean, force?: boolean) => void) | null>(null);
-  const publishFileRef = useRef<((url: string, duration?: number) => void) | null>(null);
-  const lastFileKeyRef = useRef<string | null>(null);
-  const nativeDurationRef = useRef(0);
-  const currentMediaRef = useRef<MediaItem | null>(null);
-
   useEffect(() => {
     initAudioUnlock();
     try {
@@ -204,74 +163,6 @@ export default function App() {
     statusTimerRef.current = setTimeout(() => setStatusMessage(null), ms);
   }, []);
 
-  // Gate helpers inhein apni definition se pehle call karte hain — refs sync
-  useEffect(() => { showStatusRef.current = showStatus; }, [showStatus]);
-  useEffect(() => { isSelfReadyRef.current = isSelfReady; }, [isSelfReady]);
-  useEffect(() => { currentMediaRef.current = currentMedia; }, [currentMedia]);
-
-  /**
-   * SLOW-PEER PRIORITY (web player mirror of SyncplaySocketClient.java).
-   *
-   * Syncplay server ka room position = SAB SE PEECHAY wale peer ki position
-   * (server.py Room.getPosition -> min(watchers)). To agar hum room se aagay
-   * hain, iska matlab hum hi tez hain — apni raftaar 0.95x karo taake peechay
-   * wala bina dobara buffer kiye barabar aa jaye. Peechay wale peer ko kabhi
-   * aagay mat kheencho, siwaye us waqt jab gap 4s se bhi zyada ho jaye.
-   */
-  const applyWebSlowPeerRule = useCallback((roomPos: number, paused: boolean) => {
-    try {
-      // Agar native MPV hi video chala raha hai to Java side (SyncplaySocketClient)
-      // ye faisla karta hai — web ko haath na lagao. Sirf bridge ka hona kaafi nahi,
-      // kyunke Android app web player bhi chala sakti hai jahan bridge to maujood hai
-      // magar MPV band hai. Asal signal: MPV ne file kholi hai ya nahi.
-      if (nativeMediaOpenRef.current) return;
-      const v = typeof document !== 'undefined'
-        ? (document.querySelector('video') as HTMLVideoElement | null)
-        : null;
-      if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
-      if (paused || v.paused) {
-        if (webSpeedChangedRef.current) {
-          v.playbackRate = 1.0;
-          webSpeedChangedRef.current = false;
-          setSyncSpeedNotice(null);
-        }
-        return;
-      }
-      const diff = (v.currentTime || 0) - roomPos;
-
-      if (diff > REWIND_THRESHOLD) {
-        // SLOW-PEER PRIORITY ka sab se saaf roop: hum slow peer se 4s+ aagay nikal gaye.
-        // 0.95x se itna gap band karne mein ~2 minute lagte — is liye HUM (tez peer)
-        // peechay aate hain slow peer ke paas. Slow peer ko chhedte tak nahi.
-        try { v.currentTime = roomPos; } catch { /* ignore */ }
-        if (webSpeedChangedRef.current) {
-          v.playbackRate = 1.0;
-          webSpeedChangedRef.current = false;
-        }
-        setSyncSpeedNotice('⏪ Slow peer ke paas wapas aa rahe hain');
-        if (rewindNoticeTimerRef.current) clearTimeout(rewindNoticeTimerRef.current);
-        rewindNoticeTimerRef.current = setTimeout(() => setSyncSpeedNotice(null), 2500);
-      } else if (diff < -BEHIND_HARD_SEEK) {
-        // Last resort: 4s se zyada peechay — ab seek ke bina barabari mumkin nahi
-        try { v.currentTime = roomPos + FASTFORWARD_EXTRA; } catch { /* ignore */ }
-        if (webSpeedChangedRef.current) {
-          v.playbackRate = 1.0;
-          webSpeedChangedRef.current = false;
-          setSyncSpeedNotice(null);
-        }
-      } else if (diff > SLOWDOWN_THRESHOLD && !webSpeedChangedRef.current) {
-        v.playbackRate = SLOWDOWN_RATE;
-        webSpeedChangedRef.current = true;
-        setSyncSpeedNotice('🐢 Slow peer ka intezaar — 0.95x');
-      } else if (webSpeedChangedRef.current && (Math.abs(diff) < SLOWDOWN_RESET || diff < 0)) {
-        // Mil gaye (0.1s ke andar) — ya ab hum hi peechay hain to throttle hatao
-        v.playbackRate = 1.0;
-        webSpeedChangedRef.current = false;
-        setSyncSpeedNotice(null);
-      }
-    } catch { /* ignore */ }
-  }, []);
-
   // ---- NATIVE MPV helpers ----
   const getNativeBridge = () => {
     try {
@@ -279,7 +170,6 @@ export default function App() {
       return typeof w.AndroidMpvBridge?.openMpv === 'function' ? w.AndroidMpvBridge : null;
     } catch { return null; }
   };
-  getNativeBridgeRef.current = getNativeBridge;
 
   /** Media native MPV mein kholo. force=true pe same URL dobara bhi kholo (re-play intent) */
   const openInNativeMpv = (url: string, force = false) => {
@@ -305,21 +195,11 @@ export default function App() {
         const st = JSON.parse(e?.detail || '{}');
         const pos = typeof st.position === 'number' ? st.position : 0;
         const paused = !!st.paused;
-        // READINESS (MPV first): duration mil gayi = file khul chuki.
-        // 'buffering' = mpv ka paused-for-cache — ye pehle se aa raha tha
-        // lekin koi sun nahi raha tha. Yahi asal buffer signal hai.
-        if (typeof st.duration === 'number' && st.duration > 0) {
-          nativeMediaOpenRef.current = true;
-          nativeDurationRef.current = st.duration;
-        }
-        nativeBufferingRef.current = !!st.buffering;
         setCurrentTime((prev) => {
           // Chhoti drift ignore — warna har 500ms UI render storm
           return Math.abs(prev - pos) > 1.5 ? pos : prev;
         });
         setIsPlaying((prev) => {
-          // Gate khula hai to MPV ki apni state ko play mat banne do
-          if (readyGateRef.current && !paused) return prev;
           if (prev === !paused) return prev;
           return !paused;
         });
@@ -332,22 +212,8 @@ export default function App() {
     const onSyncAction = (e: any) => {
       try {
         const d = JSON.parse(e?.detail || '{}');
-        // SLOW-PEER PRIORITY: speed events sirf raftaar badalte hain, position nahi.
-        // Inhe position/play state pe asar nahi dalne dena, warna seekbar uchhalti hai.
-        if (d.action === 'slowdown') {
-          setSyncSpeedNotice('🐢 Slow peer ka intezaar — 0.95x');
-          return;
-        }
-        if (d.action === 'speed-reset') {
-          setSyncSpeedNotice(null);
-          return;
-        }
         if (typeof d.position === 'number') setCurrentTime(d.position);
-        if (typeof d.paused === 'boolean') {
-          // Gate khula ho to remote tick play na kar de
-          if (readyGateRef.current && !d.paused) return;
-          setIsPlaying(!d.paused);
-        }
+        if (typeof d.paused === 'boolean') setIsPlaying(!d.paused);
       } catch { /* ignore */ }
     };
     window.addEventListener('mpv-state', onMpvState as EventListener);
@@ -399,13 +265,6 @@ export default function App() {
       const same = prev && prev.url === active.url && prev.videoId === active.videoId;
       if (same) return prev;
       setCurrentTime(0);
-      // READINESS GATE: remote se nayi media aayi — hum bhi PAUSED load karenge
-      // aur buffer hote hi "ready" bhejenge. Loader hum nahi hain.
-      isLoaderRef.current = false;
-      openReadyGate();
-      // SLOW-PEER: server ko batao hum bhi yehi file dekh rahe hain (warna min() hamein skip karega)
-      lastFileKeyRef.current = null;
-      publishFileRef.current?.(active.url, 0);
       // NATIVE: remote user ne nayi cheez lagayi -> humein bhi native mein kholo
       openInNativeMpv(active.url);
       return active;
@@ -418,124 +277,6 @@ export default function App() {
     clientRef.current.publish('', SyncplayProtocol.playlistChange(currentUser.name, items.map((i) => i.url)));
     clientRef.current.publish('', SyncplayProtocol.playlistIndex(currentUser.name, index));
   };
-
-  /* ── READINESS GATE helpers ─────────────────────────────────────── */
-
-  /** Apni readiness server ko batao (sirf jab badle — wire spam se bachao). */
-  const publishReady = useCallback((ready: boolean, force = false) => {
-    if (!clientRef.current || !currentUser) return;
-    if (!force && sentReadyRef.current === ready) return;
-    sentReadyRef.current = ready;
-    setIsSelfReady(ready);
-    // Apni row foran update karo (server echo ka intezaar nahi)
-    setMembers((prev) => prev.map((m) => (m.id === currentUser.id ? { ...m, isReady: ready } : m)));
-    try {
-      clientRef.current.publish('', SyncplayProtocol.ready(currentUser.name, ready));
-    } catch { /* ignore */ }
-  }, [currentUser]);
-  publishReadyRef.current = publishReady;
-
-  /**
-   * SLOW-PEER PRIORITY ki buniyad: server ko batao ke hum kaunsi file dekh rahe hain.
-   *
-   * Server.py ka Room.getPosition() = min(watchers), aur Watcher.__lt__ un watchers ko
-   * mukammal nazarandaz karta hai jinki `_file` None ho. Agar hum `Set.file` na bhejein
-   * to server hamein kabhi "sab se peechay wala" nahi maan sakta — slow-peer priority
-   * kaam hi nahi karegi. Duration player se milte hi dobara bhej dete hain.
-   */
-  const publishFile = useCallback((url: string, duration = 0) => {
-    if (!clientRef.current) return;
-    try {
-      const label = (() => {
-        try {
-          const u = new URL(url);
-          const last = u.pathname.split('/').filter(Boolean).pop();
-          return last || u.hostname;
-        } catch { return url.slice(0, 120); }
-      })();
-      if (lastFileKeyRef.current === `${label}|${Math.round(duration)}`) return;
-      lastFileKeyRef.current = `${label}|${Math.round(duration)}`;
-      clientRef.current.publish('', SyncplayProtocol.file(label, duration));
-    } catch { /* ignore */ }
-  }, []);
-  publishFileRef.current = publishFile;
-
-  /** Nayi media aayi — gate lagao, sab ko not-ready, PAUSED rakho. */
-  const openReadyGate = useCallback(() => {
-    readyGateRef.current = true;
-    readyGateStartRef.current = Date.now();
-    setWaitingForReady(true);
-    setIsPlaying(false);          // ← asal fix: foran play NAHI
-    sentReadyRef.current = null;  // agli publish force ho
-    setIsSelfReady(false);
-    setMembers((prev) => prev.map((m) => ({ ...m, isReady: false })));
-  }, []);
-
-  /** Sab tayyar — gate kholo aur chalao. Sirf loader room ko play bhejta hai. */
-  const closeReadyGateAndPlay = useCallback((byLoader: boolean) => {
-    if (!readyGateRef.current) return;
-    readyGateRef.current = false;
-    setWaitingForReady(false);
-    if (byLoader) {
-      // Loader hi State bhejta hai — warna sab ek saath bhejte aur server par toofan
-      setIsPlaying(true);
-      broadcastCommandRef.current?.('play', { time: 0 });
-      showStatusRef.current?.('▶️ Sab tayyar — playback shuru!', 2500);
-    }
-  }, []);
-
-  /* ── BUFFER DETECT: apni ready-state bhejo ──
-   * MPV FIRST: native khud 'paused-for-cache' (asal buffering signal) deta hai —
-   * duration mil gayi AUR cache-buffering band = sach much tayyar.
-   * Web player: <video> ka readyState >= 3 (HAVE_FUTURE_DATA). */
-  useEffect(() => {
-    if (!joined || !waitingForReady) return;
-    const check = () => {
-      let bufferedEnough = false;
-      try {
-        if (nativeMediaOpenRef.current) {
-          // MPV FIRST: native ne file khol li — ab sirf cache-buffering dekhni hai
-          bufferedEnough = !nativeBufferingRef.current;
-          // SLOW-PEER: duration mil gayi to file dobara register karo (ab sahi duration ke saath)
-          if (nativeDurationRef.current > 0) {
-            publishFileRef.current?.(currentMediaRef.current?.url || '', nativeDurationRef.current);
-          }
-        } else {
-          const v = document.querySelector('video') as HTMLVideoElement | null;
-          if (v) {
-            bufferedEnough = v.readyState >= 3;
-            if (Number.isFinite(v.duration) && v.duration > 0) {
-              publishFileRef.current?.(currentMediaRef.current?.url || '', v.duration);
-            }
-          } else {
-            bufferedEnough = Date.now() - readyGateStartRef.current > 2500; // YouTube iframe/audio
-          }
-        }
-      } catch { /* ignore */ }
-      if (bufferedEnough) publishReady(true);
-    };
-    check();
-    const t = setInterval(check, 400);
-    return () => clearInterval(t);
-  }, [joined, waitingForReady, publishReady]);
-
-  /* ── SAB READY? to chalao. 12s safety timeout — koi atke to bhi chalein. */
-  useEffect(() => {
-    if (!waitingForReady) return;
-    const everyoneReady = members.length > 0 && members.every((m) => m.isReady === true);
-    if (everyoneReady) {
-      closeReadyGateAndPlay(isLoaderRef.current);
-      return;
-    }
-    const t = setInterval(() => {
-      if (Date.now() - readyGateStartRef.current > 12000) {
-        const waiting = members.filter((m) => m.isReady !== true).map((m) => m.name);
-        if (waiting.length) showStatus(`⚠️ ${waiting.join(', ')} ka intezaar khatam — chala rahe hain`, 3000);
-        closeReadyGateAndPlay(isLoaderRef.current);
-      }
-    }, 1000);
-    return () => clearInterval(t);
-  }, [waitingForReady, members, closeReadyGateAndPlay, showStatus]);
 
   const connectSyncplay = (user: User, room: string, brokerIdx: number) => {
     const broker = BROKERS[brokerIdx] || BROKERS[0];
@@ -565,28 +306,15 @@ export default function App() {
             .map((n) => {
               const hash = [...String(n)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
               const av = globalAvs[n.toLowerCase()] || { type: 'letter' };
-              // Server ki List mein bhi isReady aata hai
-              const rowReady = (roomData as any)?.[n]?.isReady;
               return {
                 id: 'sp_' + n,
                 name: n,
                 color: COLORS[hash % COLORS.length],
                 avatar: av,
                 ts: Date.now(),
-                isReady: typeof rowReady === 'boolean' ? rowReady : undefined,
               };
             });
-          // READINESS: List har 5s aati hai — jahan server ne isReady na bheja ho
-          // wahan purani maloom readiness barqarar rakho, warna 🟢 blink karta hai
-          setMembers((prev) => {
-            const prevReady = new Map(prev.map((m) => [m.name, m.isReady]));
-            const merged = others.map((o) =>
-              o.isReady === undefined && prevReady.has(o.name)
-                ? { ...o, isReady: prevReady.get(o.name) }
-                : o,
-            );
-            return [{ ...user, isReady: sentReadyRef.current ?? undefined }, ...merged];
-          });
+          setMembers([user, ...others]);
           if (others.length > 0 && typeof window !== 'undefined' && (window as any).__wp_broadcastAvatar) {
             const now = Date.now();
             if (now - lastAvatarBroadcastRef.current > 3000) {
@@ -612,12 +340,6 @@ export default function App() {
           const ign = msg.State.ignoringOnTheFly;
           if (ign && typeof ign.client === 'number' && ign.client === clientIgnRef.current && clientIgnRef.current !== 0) {
             clientIgnRef.current = 0;
-          }
-          // SLOW-PEER PRIORITY: har playstate tick pe (apni echo bhi) raftaar ka faisla karo.
-          // roomPosition = sab se peechay wale peer ki position, is liye ye har tick pe
-          // sach batati hai ke hum aagay hain ya peechay. Position ko haath nahi lagate.
-          if (typeof ps.position === 'number' && !ps.doSeek) {
-            applyWebSlowPeerRule(ps.position, !!ps.paused);
           }
           // setBy = jis ne change kiya. Sirf doosron ki changes apply karo (apni + routine pings nahi).
           if (ps.setBy && ps.setBy !== user.name) {
@@ -730,37 +452,6 @@ export default function App() {
           playlistIndexRef.current = idx ?? null;
           applyRemotePlaylist(playlistFilesRef.current, playlistIndexRef.current, msg.Set.playlistIndex.user, user);
         }
-
-        // --- READINESS: kisi member ne apni ready/not-ready state batayi ---
-        if (msg && msg.Set && msg.Set.ready) {
-          const r = msg.Set.ready;
-          const who = r.username;
-          // Server join par {isReady: null} bhejta hai = "abhi bataya hi nahi".
-          // Ise false mat samjho warna (a) chat spam hota hai aur (b) jo pehle
-          // se ready tha wo null aate hi dobara not-ready ho jata hai.
-          const rdy: boolean | undefined = typeof r.isReady === 'boolean' ? r.isReady : undefined;
-          if (who) {
-            setMembers((prev) => prev.map((m) =>
-              m.name === who ? { ...m, isReady: rdy === undefined ? m.isReady : rdy } : m,
-            ));
-            if (who !== user.name && rdy !== undefined) {
-              setMessages((prev) => [...prev, {
-                id: generateMid(), senderId: 'system', name: 'System', color: '#38bdf8',
-                text: rdy ? `✅ ${who} tayyar hai` : `⏳ ${who} abhi load kar raha hai...`,
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                isSystem: true,
-              }]);
-            }
-          }
-        }
-        // Set.user payload mein bhi isReady aa sakta hai (join/leave ke saath)
-        if (msg && msg.Set && msg.Set.user && typeof msg.Set.user === 'object') {
-          for (const [uname, info] of Object.entries<any>(msg.Set.user)) {
-            if (info && typeof info.isReady === 'boolean') {
-              setMembers((prev) => prev.map((m) => (m.name === uname ? { ...m, isReady: info.isReady } : m)));
-            }
-          }
-        }
       } catch {
         // ignore non-JSON lines
       }
@@ -777,9 +468,6 @@ export default function App() {
         hadConnectedRef.current = true;
       }
       setMembers([user]);
-      // READINESS: reconnect par apni state dobara advertise karo
-      sentReadyRef.current = null;
-      if (currentMedia) publishReadyRef.current?.(isSelfReadyRef.current, true);
       requestList(); // foran roster maango
       if (listTimerRef.current) clearInterval(listTimerRef.current);
       listTimerRef.current = setInterval(requestList, 5000); // har 5s roster refresh
@@ -861,12 +549,7 @@ export default function App() {
     if (cmd.action === 'load' && cmd.media) {
       setCurrentMedia(cmd.media);
       setCurrentTime(cmd.time || 0);
-      // READINESS GATE: remote load bhi PAUSED — buffer ho kar ready bhejenge
-      isLoaderRef.current = false;
-      openReadyGate();
-      // SLOW-PEER: is file ko apne naam se server par register karo
-      lastFileKeyRef.current = null;
-      publishFileRef.current?.(cmd.media.url, 0);
+      setIsPlaying(true);
       setMessages((prev) => [
         ...prev,
         {
@@ -881,12 +564,6 @@ export default function App() {
       ]);
     } else if (cmd.action === 'play') {
       if (cmd.time !== undefined) setCurrentTime(cmd.time);
-      // Loader ka play-signal = sab ready the, is liye gate bhi band karo
-      // (warna waiting banner atka reh jata hai)
-      if (readyGateRef.current) {
-        readyGateRef.current = false;
-        setWaitingForReady(false);
-      }
       setIsPlaying(true);
     } else if (cmd.action === 'pause') {
       if (cmd.time !== undefined) setCurrentTime(cmd.time);
@@ -953,10 +630,7 @@ export default function App() {
     if (action === 'play') paused = false;
     else if (action === 'pause') paused = true;
     else if (action === 'seek') { paused = !isPlaying; doSeek = true; }
-    // READINESS GATE: load hamesha PAUSED @0. Pehle yahan paused=false tha, jis se
-    // peer foran chal parta aur phir gate use rokta — yani play/pause flicker.
-    // Asli Syncplay bhi load par paused hi bhejta hai.
-    else if (action === 'load') { paused = true; doSeek = true; }
+    else if (action === 'load') { paused = false; doSeek = true; }
     else if (action === 'sync') { paused = extra.playing !== undefined ? !extra.playing : !isPlaying; doSeek = true; }
     else return;
 
@@ -979,7 +653,6 @@ export default function App() {
       }
     } catch { /* ignore */ }
   };
-  broadcastCommandRef.current = broadcastCommand;
 
   const handleLoadMedia = () => {
     // LIVE DOM fallback: kuch phones pe React state paste bhool jati hai — asal input se lo
@@ -1006,15 +679,7 @@ export default function App() {
 
     setCurrentMedia(item);
     setCurrentTime(0);
-    // READINESS GATE: pehle yahan setIsPlaying(true) tha — link paste karte hi
-    // dono taraf foran play shuru ho jati thi aur slow-net wala peeche reh jata.
-    // Ab asli Syncplay ki tarah PAUSED load hoti hai, sab ready hon tab chalti hai.
-    isLoaderRef.current = true;
-    openReadyGate();
-    // SLOW-PEER: file server par register karo — is ke baghair room position
-    // kabhi slow peer ki nahi hogi (server.py Watcher.__lt__ _file None ko skip karta hai)
-    lastFileKeyRef.current = null;
-    publishFileRef.current?.(item.url, 0);
+    setIsPlaying(true);
     // INPUT CLEAR MAT KARO — user ka link wahi rahega taake dobara Play dabane se re-play ho
     // (pehle yahan setUrlInput('') tha isliye 2nd press pe "pehle link paste karo" ata tha)
 
@@ -1026,7 +691,7 @@ export default function App() {
 
     broadcastCommand('load', { media: item, time: 0 });
     syncQueueToRoom(newQueue, 0);
-    showStatus('⏳ Load ho rahi hai — sab ke tayyar hone ka intezaar...', 3000);
+    showStatus(getNativeBridge() ? '🎬 Native MPV se play ho raha hai...' : `🎬 ${item.label} load hui`, 3000);
   };
 
   // Media khatam/clear ho to native player bhi band karo (warna overlay screen pe latka rehta)
@@ -1199,16 +864,6 @@ export default function App() {
       if (typeof w.AndroidMpvBridge?.closeMpv === 'function') w.AndroidMpvBridge.closeMpv();
     } catch { /* ignore */ }
     lastNativeUrlRef.current = null;
-    // READINESS: gate ki saari state saaf karo
-    readyGateRef.current = false;
-    sentReadyRef.current = null;
-    isLoaderRef.current = false;
-    nativeMediaOpenRef.current = false;
-    nativeDurationRef.current = 0;
-    lastFileKeyRef.current = null;
-    nativeBufferingRef.current = false;
-    setWaitingForReady(false);
-    setIsSelfReady(false);
     if (clientRef.current && currentUser) {
       clientRef.current.end(true);
     }
@@ -1368,9 +1023,6 @@ export default function App() {
                 onSendMessage={handleSendMessage}
                 onTyping={handleTyping}
                 onToggleSound={() => setSoundEnabled(!soundEnabled)}
-                waitingForReady={waitingForReady}
-                isSelfReady={isSelfReady}
-                onToggleReady={() => publishReady(!isSelfReady, true)}
               />
             </aside>
           </main>
@@ -1386,16 +1038,6 @@ export default function App() {
           className="fixed top-3.5 left-1/2 -translate-x-1/2 z-[999] px-4 py-2 rounded-full bg-black/85 border border-purple-400/40 text-white text-xs font-semibold shadow-2xl shadow-purple-950/50 backdrop-blur-md max-w-[92vw] text-center pointer-events-none"
         >
           {statusMessage}
-        </div>
-      )}
-
-      {/* SLOW-PEER PRIORITY indicator — jab hum tez hain aur 0.95x pe throttle hain */}
-      {syncSpeedNotice && joined && (
-        <div
-          id="sync-speed-pill"
-          className="fixed bottom-3.5 left-1/2 -translate-x-1/2 z-[998] px-3 py-1.5 rounded-full bg-amber-950/85 border border-amber-400/40 text-amber-100 text-[11px] font-semibold shadow-xl backdrop-blur-md pointer-events-none"
-        >
-          {syncSpeedNotice}
         </div>
       )}
     </div>

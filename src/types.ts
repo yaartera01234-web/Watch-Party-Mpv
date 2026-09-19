@@ -12,8 +12,6 @@ export interface User {
   color: string;
   avatar: AvatarData;
   ts: number;
-  /** READINESS: true = buffer ho gaya/tayyar, false = abhi load kar raha, undefined = abhi bataya hi nahi */
-  isReady?: boolean;
 }
 
 export interface MediaItem {

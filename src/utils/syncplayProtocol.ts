@@ -34,34 +34,6 @@ export const SyncplayProtocol = {
   },
 
   /**
-   * SLOW-PEER PRIORITY ki BUNIYAD — `Set.file`.
-   *
-   * Syncplay server room ki position yun chunta hai (server.py Room.getPosition):
-   *     watcher = min(self._watchers.values())
-   * aur `Watcher.__lt__` sab se pehle yeh dekhta hai:
-   *     if self.getPosition() is None or self._file is None: return False
-   *
-   * Yaani jis watcher ne kabhi `Set.file` nahi bheji, uska `_file` None rehta hai,
-   * wo kabhi `min()` nahi jeet sakta — server usay "sab se peechay wala" mante hi
-   * nahi. Nateeja: room position hamesha kisi aur ki hoti hai aur slow peer ko
-   * priority milti hi nahi.
-   *
-   * Is liye media load karte waqt file ka naam/duration bhejna LAZMI hai.
-   */
-  file(name: string, duration: number, size = 0): string {
-    return JSON.stringify({
-      Set: {
-        file: {
-          name,
-          duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
-          size,
-          path: null,
-        },
-      },
-    });
-  },
-
-  /**
    * Play / pause / seek — official State message.
    * clientIgnoring: har user-initiated change pe +1 (echo loops rokne ke liye).
    * latencyCalculation: server ke aakhri ping ka echo (keep-alive ka hissa).
