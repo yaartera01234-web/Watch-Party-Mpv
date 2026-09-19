@@ -318,20 +318,18 @@ public class SyncplaySocketClient {
                             }
                             notifySyncAction("rewind", setBy, roomPosition, paused);
                         } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek && !paused) {
-                            // PAUSE-SAFE: paused room mein autonomous seek nahi.
-                            // SLOW-PEER PRIORITY: local client is behind the slowest room
-                            // position by more than 4s. At this point the gap is too wide to
-                            // close by speed alone, so a seek is the last resort. Anything
-                            // smaller is handled by slowing the FAST peers down instead of
-                            // yanking this (weak-connection) peer forward.
-                            if (pc != null && pc.hasMedia()) {
-                                pc.executeSeek(roomPosition + FASTFORWARD_EXTRA_TIME);
-                            }
+                            // YUROYAMI RULE (SyncDecision.kt): "In a normal room everyone can
+                            // control, so the room follows its slowest member instead."
+                            // Normal room mein forced fast-forward seek KABHI nahi -- desktop
+                            // Syncplay aur yuroyami dono sirf controlled rooms mein yank karte
+                            // hain. Hamara yahi autonomous seek MPV player ko har buffering
+                            // stall ke baad aagay phek deta tha = jhatke + 2s jump. Ab hum
+                            // slow peer hain to server ka min(watchers) room ko hamare paas
+                            // rokta hai; tez peer khud 0.95x par aata hai. Koi yank nahi.
                             if (this.speedChanged) {
-                                if (pc != null) pc.executeSpeed(1.0);
+                                if (pc != null && pc.hasMedia()) pc.executeSpeed(1.0);
                                 this.speedChanged = false;
                             }
-                            notifySyncAction("fast-forward", setBy, roomPosition + FASTFORWARD_EXTRA_TIME, paused);
                         } else if (!paused && !doSeek) {
                             // Subtle catch-up via playback speed adjustment.
                             //

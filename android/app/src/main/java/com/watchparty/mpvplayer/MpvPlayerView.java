@@ -117,8 +117,25 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 lastPollPos = dpos;
                 updateDebugHud(gap, dpos, posDelta, dpaused, (buf != null && buf));
 
+                // MONOTONIC SMOOTHING (display payload ke liye):
+                //  - >1.5s farq = asli seek (play ho ya pause) -> snap
+                //  - pause entry -> exact position par freeze
+                //  - playback mein sirf aagay barho; +-0.24s ke raw dips ignore
+                double rawPos = (pos == null ? 0.0 : pos);
+                boolean nowP = (paused != null && paused) || (buf != null && buf);
+                if (MpvPlayerView.this.dispPos < 0
+                        || Math.abs(rawPos - MpvPlayerView.this.dispPos) > 1.5) {
+                    MpvPlayerView.this.dispPos = rawPos;
+                } else if (nowP && !MpvPlayerView.this.dispPaused) {
+                    MpvPlayerView.this.dispPos = rawPos;
+                } else if (!nowP && rawPos > MpvPlayerView.this.dispPos) {
+                    MpvPlayerView.this.dispPos = rawPos;
+                }
+                MpvPlayerView.this.dispPaused = nowP;
+                double smoothPos = MpvPlayerView.this.dispPos;
+
                 JSONObject o = new JSONObject();
-                o.put("position", pos == null ? 0.0 : pos);
+                o.put("position", smoothPos);
                 o.put("duration", dur == null ? 0.0 : dur);
                 o.put("paused", paused != null && paused);
                 o.put("volume", vol == null ? 100 : vol);
@@ -393,6 +410,12 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private long hudGap; private double hudPos; private double hudDelta;
     private boolean hudPaused; private boolean hudBuf;
     private double hudCacheSec = -1.0; private double hudCacheMB = -1.0;
+    // MONOTONIC DISPLAY POSITION: mpv ka raw time-pos kabhi kabhi +-0.24s dip
+    // karta hai (A/V sync jitter) jo display par flapping banata hai. WebView ko
+    // bheji jane wali position is liye smooth ki jati hai: aagay sirf asal
+    // barhaat, peeche sirf asli seek (>1.5s), pause par exact freeze.
+    private double dispPos = -1.0;
+    private boolean dispPaused = false;
 
     private void updateDebugHud(long gap, double pos, double posDelta,
                                 boolean paused, boolean buffering) {
