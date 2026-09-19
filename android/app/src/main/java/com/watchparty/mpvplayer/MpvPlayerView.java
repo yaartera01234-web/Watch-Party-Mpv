@@ -117,7 +117,9 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                     MpvPlayerView.this.jsProbeCount = 0;
                     try {
                         MpvPlayerView.this.jsEmitter.eval(
-                            "(window.wpC4?'wpC4':(window.wpC3?'wpC3':'orig'))",
+                            "(function(){var m=window.wpC4?'wpC4':(window.wpC3?'wpC3':'orig');"
+                            + "var d=document.querySelector('div[title=\"Click to toggle remaining time\"] span');"
+                            + "return m+'|'+(d?d.textContent:'-')})()",
                             new android.webkit.ValueCallback<String>() {
                                 @Override public void onReceiveValue(String v) {
                                     MpvPlayerView.this.jsMarker =
@@ -174,6 +176,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             long age = android.os.SystemClock.elapsedRealtime() - this.dispAtMs;
             if (age > 0 && age < 2000) out += (age / 1000.0) * this.dispSpeed;
         }
+        this.hudPay = out;
         try {
             JSONObject o = new JSONObject();
             o.put("position", out);
@@ -449,6 +452,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private long hudGap; private double hudPos; private double hudDelta;
     private boolean hudPaused; private boolean hudBuf;
     private double hudCacheSec = -1.0; private double hudCacheMB = -1.0;
+    private double hudPay = -1.0;   // DEBUG: WebView ko bheji gayi aakhri position
     // MONOTONIC DISPLAY POSITION: mpv ka raw time-pos kabhi kabhi +-0.24s dip
     // karta hai (A/V sync jitter) jo display par flapping banata hai. WebView ko
     // bheji jane wali position is liye smooth ki jati hai: aagay sirf asal
@@ -508,7 +512,11 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
               + (this.hudCacheMB >= 0
                     ? " (" + String.format(java.util.Locale.US, "%.0f", this.hudCacheMB) + "MB)"
                     : "")
-              + " / 200MB cap" + "  js=" + this.jsMarker;
+              + " / 200MB cap" + "  js=" + this.jsMarker
+              + (this.hudPay >= 0
+                    ? "  pay=" + String.format(java.util.Locale.US, "%02d:%02d",
+                          (int) (this.hudPay / 60), ((int) this.hudPay) % 60)
+                    : "");
             this.debugHud.setText(s);
             this.debugHud.bringToFront();
         } catch (Throwable ignored) {
