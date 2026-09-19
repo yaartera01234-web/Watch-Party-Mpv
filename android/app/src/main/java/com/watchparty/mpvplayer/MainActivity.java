@@ -161,18 +161,25 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
         this.ensureMpvCreated();
         if (this.mpvPlayerView != null) this.mpvPlayerView.openLocal(uri);
-        // V82 SLOT FIX: local file par JS ko media ka pata nahi chalta, is
-        // liye wo mpvSetRect kabhi nahi bhejta aur fallback slot (0,0 = screen
-        // ke TOP par 16:9) lag jata tha = "player wali jagah se upar". Ab hum
-        // khud player container (#no-video-placeholder, absolute inset-0 =
-        // poora player slot) ka rect JS se le kar wahi slot set karte hain.
+        // V83 SLOT FIX v2: multi-strategy rect + on-screen debug banner.
+        // Pehle #native-video-slot (agar JS media janta hai), warna
+        // #no-video-placeholder (fresh state). Rect milte hi mpvSetRect;
+        // na mile to 500ms retry x6. Red banner batata hai kya hua taake
+        // screenshot se exact cause pakri ja sake.
         this.ui.postDelayed(() -> {
             try {
                 WebView w = getBridge() == null ? null : getBridge().getWebView();
                 if (w != null) {
-                    w.evaluateJavascript("(function(){var e=document.getElementById('no-video-placeholder');"
-                            + "if(e){var r=e.getBoundingClientRect();"
-                            + "if(r.width>10&&r.height>10){AndroidMpvBridge.mpvSetRect(Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height));}}})();", null);
+                    w.evaluateJavascript("(function(){function go(n){"
+                            + "var e=document.getElementById('native-video-slot')||document.getElementById('no-video-placeholder');"
+                            + "var info='LOCAL-SLOT try'+n+': '+(e?e.id:'null');"
+                            + "if(e){var r=e.getBoundingClientRect();info+=' ['+Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+','+Math.round(r.height)+']';"
+                            + "if(r.width>10&&r.height>10){AndroidMpvBridge.mpvSetRect(Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height));info+=' SENT';}}"
+                            + "var d=document.getElementById('wpdbg');if(!d){d=document.createElement('div');d.id='wpdbg';"
+                            + "d.style.cssText='position:fixed;top:4px;left:4px;right:4px;z-index:2147483647;background:#7f1d1d;color:#fff;font:11px monospace;padding:6px;border-radius:6px';"
+                            + "document.body.appendChild(d);}d.textContent=info;"
+                            + "if(!e&&n<6){setTimeout(function(){go(n+1);},500);}else{setTimeout(function(){var x=document.getElementById('wpdbg');if(x)x.remove();},9000);}}"
+                            + "go(1);})();", null);
                 }
             } catch (Exception ignored) {}
         }, 600);
