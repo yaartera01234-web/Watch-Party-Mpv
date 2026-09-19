@@ -132,23 +132,55 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                     MpvPlayerView.this.dispPos = rawPos;
                 }
                 MpvPlayerView.this.dispPaused = nowP;
-                double smoothPos = MpvPlayerView.this.dispPos;
-
-                JSONObject o = new JSONObject();
-                o.put("position", smoothPos);
-                o.put("duration", dur == null ? 0.0 : dur);
-                o.put("paused", paused != null && paused);
-                o.put("volume", vol == null ? 100 : vol);
-                o.put("speed", spd == null ? 1.0 : spd);
-                o.put("buffering", buf != null && buf);
-
-                if (jsEmitter != null) {
-                    jsEmitter.emit("mpv-state", o.toString());
-                }
+                MpvPlayerView.this.dispAtMs = android.os.SystemClock.elapsedRealtime();
+                MpvPlayerView.this.dispSpeed = (spd == null ? 1.0 : spd);
+                MpvPlayerView.this.payDur = (dur == null ? 0.0 : dur);
+                MpvPlayerView.this.payPaused = (paused != null && paused);
+                MpvPlayerView.this.payVol = (vol == null ? 100 : vol);
+                MpvPlayerView.this.payBuf = (buf != null && buf);
+                dispatchState();
             } catch (Throwable t) {
                 Log.w(TAG, "poll fail", t);
             }
             poll.postDelayed(this, 250);
+        }
+    };
+
+    /**
+     * YUROYAMI / desktop-Syncplay STYLE EXTRAPOLATION (PlayerManager.kt
+     * estimatedPositionMs: "last sample + wall age while playing -- mirrors
+     * the desktop client's getPlayerPosition extrapolation").
+     *
+     * Do mpv samples (250ms) ke darmiyan display position wall-clock se
+     * aagay barhti hai, taake MPV ki clock WEB player jaisi smooth ho (web
+     * har render par currentTime khud parhta hai). Pause/buffering par
+     * freeze; extrapolation cap 2s (yuroyami jaisa) taake stall ke baad
+     * agla sample foran theek kar de.
+     */
+    private void dispatchState() {
+        if (this.jsEmitter == null) return;
+        double out = this.dispPos < 0 ? 0.0 : this.dispPos;
+        if (!this.dispPaused && this.coreReady) {
+            long age = android.os.SystemClock.elapsedRealtime() - this.dispAtMs;
+            if (age > 0 && age < 2000) out += (age / 1000.0) * this.dispSpeed;
+        }
+        try {
+            JSONObject o = new JSONObject();
+            o.put("position", out);
+            o.put("duration", this.payDur);
+            o.put("paused", this.payPaused);
+            o.put("volume", this.payVol);
+            o.put("speed", this.dispSpeed);
+            o.put("buffering", this.payBuf);
+            this.jsEmitter.emit("mpv-state", o.toString());
+        } catch (Throwable ignored) {}
+    }
+
+    /** 100ms display ticker -- extrapolated position dispatch karta hai. */
+    private final Runnable dispTask = new Runnable() {
+        @Override public void run() {
+            if (MpvPlayerView.this.coreReady) dispatchState();
+            MpvPlayerView.this.poll.postDelayed(this, 100);
         }
     };
 
@@ -309,6 +341,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         if (this.polling) return;
         this.polling = true;
         this.poll.postDelayed(this.pollTask, 250);
+        this.poll.postDelayed(this.dispTask, 100);
     }
 
     public void open(String videoUrl) {
@@ -416,6 +449,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     // barhaat, peeche sirf asli seek (>1.5s), pause par exact freeze.
     private double dispPos = -1.0;
     private boolean dispPaused = false;
+    private long dispAtMs = 0L;
+    private double dispSpeed = 1.0;
+    private double payDur = 0.0; private boolean payPaused = false;
+    private int payVol = 100; private boolean payBuf = false;
 
     private void updateDebugHud(long gap, double pos, double posDelta,
                                 boolean paused, boolean buffering) {
