@@ -161,6 +161,21 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
         this.ensureMpvCreated();
         if (this.mpvPlayerView != null) this.mpvPlayerView.openLocal(uri);
+        // V82 SLOT FIX: local file par JS ko media ka pata nahi chalta, is
+        // liye wo mpvSetRect kabhi nahi bhejta aur fallback slot (0,0 = screen
+        // ke TOP par 16:9) lag jata tha = "player wali jagah se upar". Ab hum
+        // khud player container (#no-video-placeholder, absolute inset-0 =
+        // poora player slot) ka rect JS se le kar wahi slot set karte hain.
+        this.ui.postDelayed(() -> {
+            try {
+                WebView w = getBridge() == null ? null : getBridge().getWebView();
+                if (w != null) {
+                    w.evaluateJavascript("(function(){var e=document.getElementById('no-video-placeholder');"
+                            + "if(e){var r=e.getBoundingClientRect();"
+                            + "if(r.width>10&&r.height>10){AndroidMpvBridge.mpvSetRect(Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height));}}})();", null);
+                }
+            } catch (Exception ignored) {}
+        }, 600);
         try {
             String sz = size > 0 ? String.format(java.util.Locale.US, " (%.1f MB)", size / 1048576.0) : "";
             String msg = "\uD83D\uDCC1 Local file: " + name + sz + " -- same file hai to \uD83D\uDCC1 button se load karo";
