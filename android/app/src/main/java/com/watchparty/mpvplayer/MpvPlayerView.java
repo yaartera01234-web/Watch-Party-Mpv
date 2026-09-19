@@ -58,6 +58,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private int ffCount = 0;
     private int rwCount = 0;
     private String lastAct = "-";
+    private int rawBack = 0;   // DEBUG: mpv raw position kitni baar peeche gayi (oscillation)
 
     /**
      * SLOW-PEER PRIORITY: mpv ka 'paused-for-cache' -- yaani player ruka hua hai
@@ -112,6 +113,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 }
                 lastShownSecond = shownSec;
                 double posDelta = (lastPollPos < 0) ? 0.0 : (dpos - lastPollPos);
+                if (posDelta < -0.05) this.rawBack++;
                 lastPollPos = dpos;
                 updateDebugHud(gap, dpos, posDelta, dpaused, (buf != null && buf));
 
@@ -428,7 +430,8 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
               + "   badla x" + this.secondFlips + "   2s-jump x" + this.jump2s + "\n"
               + "paused=" + paused + "  buffering=" + buffering + "  polls=" + this.pollCount + "\n"
               + "seek x" + this.seekCount + " (" + this.lastSeekInfo + "s)"
-              + "  ff x" + this.ffCount + "  rw x" + this.rwCount + "  act=" + this.lastAct + "\n"
+              + "  ff x" + this.ffCount + "  rw x" + this.rwCount + "  rb x" + this.rawBack
+              + "  act=" + this.lastAct + "\n"
               + (this.hudCacheSec >= 0
                     ? "cache=+" + String.format(java.util.Locale.US, "%.0f", this.hudCacheSec) + "s"
                     : "cache=-")
