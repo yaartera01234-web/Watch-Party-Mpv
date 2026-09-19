@@ -34,7 +34,7 @@ public class MpvShim {
         @Override public void eventProperty(String property, String value) {}
         @Override public void eventProperty(String property, double value) {}
         @Override public void eventProperty(String property, MPVNode value) {}
-        @Override public void event(int eventId) {
+        @Override public void event(int eventId, MPVNode node) {
             if (obs != null) obs.event(eventId);
         }
     };
