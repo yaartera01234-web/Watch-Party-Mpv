@@ -163,7 +163,15 @@ public class MainActivity extends BridgeActivity {
         if (this.mpvPlayerView != null) return;
 
         this.mpvPlayerView = new MpvPlayerView(this);
-        this.mpvPlayerView.setJsEmitter(this::dispatchSyncplayEvent);
+        this.mpvPlayerView.setJsEmitter(new MpvPlayerView.JsEmitter() {
+            @Override public void emit(String event, String payload) {
+                dispatchSyncplayEvent(event, payload);
+            }
+            @Override public void eval(String script, android.webkit.ValueCallback<String> cb) {
+                WebView w = getBridge() == null ? null : getBridge().getWebView();
+                if (w != null) w.evaluateJavascript(script, cb);
+            }
+        });
 
         FrameLayout root = (FrameLayout) getWindow().getDecorView().findViewById(android.R.id.content);
         root.setFitsSystemWindows(false);

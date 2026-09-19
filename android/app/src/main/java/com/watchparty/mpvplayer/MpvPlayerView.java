@@ -24,6 +24,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
 
     public interface JsEmitter {
         void emit(String event, String payload);
+        void eval(String script, android.webkit.ValueCallback<String> cb);
     }
 
     private MPV mpv;
@@ -116,6 +117,21 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 if (posDelta < -0.05) MpvPlayerView.this.rawBack++;
                 lastPollPos = dpos;
                 updateDebugHud(gap, dpos, posDelta, dpaused, (buf != null && buf));
+
+                // DEBUG PROBE: kaunsa bundle chal raha hai (wpC4 = naya, orig = stale)
+                if (++MpvPlayerView.this.jsProbeCount >= 8) {
+                    MpvPlayerView.this.jsProbeCount = 0;
+                    try {
+                        MpvPlayerView.this.jsEmitter.eval(
+                            "(window.wpC4?'wpC4':(window.wpC3?'wpC3':'orig'))",
+                            new android.webkit.ValueCallback<String>() {
+                                @Override public void onReceiveValue(String v) {
+                                    MpvPlayerView.this.jsMarker =
+                                        (v == null ? "null" : v.replace("\"", "").trim());
+                                }
+                            });
+                    } catch (Throwable ignored) {}
+                }
 
                 // MONOTONIC SMOOTHING (display payload ke liye):
                 //  - >1.5s farq = asli seek (play ho ya pause) -> snap
@@ -449,6 +465,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     // barhaat, peeche sirf asli seek (>1.5s), pause par exact freeze.
     private double dispPos = -1.0;
     private boolean dispPaused = false;
+    // DEBUG PROBE: device asal mein kaunsa JS bundle chala raha hai (stale-cache
+    // ka faisla kun). WebView se har ~2s marker poucha jata hai.
+    private String jsMarker = "-";
+    private int jsProbeCount = 0;
     private long dispAtMs = 0L;
     private double dispSpeed = 1.0;
     private double payDur = 0.0; private boolean payPaused = false;
@@ -498,7 +518,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
               + (this.hudCacheMB >= 0
                     ? " (" + String.format(java.util.Locale.US, "%.0f", this.hudCacheMB) + "MB)"
                     : "")
-              + " / 200MB cap";
+              + " / 200MB cap" + "  js=" + this.jsMarker;
             this.debugHud.setText(s);
             this.debugHud.bringToFront();
         } catch (Throwable ignored) {
