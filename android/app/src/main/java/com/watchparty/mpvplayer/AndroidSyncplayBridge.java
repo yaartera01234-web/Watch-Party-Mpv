@@ -103,24 +103,19 @@ public final class AndroidSyncplayBridge {
             JSONObject obj = new JSONObject(payload);
             if (obj.has("State")) {
                 JSONObject st = obj.getJSONObject("State");
+                // V71/V72 CHAT-SPAM + YANK FIX: MPV mode mein JS ka apna State
+                // message wire par BILKUL na jaye (playstate AUR ignoringOnTheFly
+                // dono). Pehle ignoring counter wire par rehta tha jo har 5s
+                // badhta raha aur server hamari Java ki sahi state suppress
+                // karta raha -> room position 0/15 par collapse -> bar bar
+                // rewind yank. Ab poora State drop: Java akela sachcha client
+                // hai; local intents announceLocal() se jate hain.
+                if (st.has("playstate") && this.socketClient.hasControllerMedia()) {
+                    return;
+                }
                 JSONObject ign = st.optJSONObject("ignoringOnTheFly");
                 if (ign != null && ign.has("client")) {
                     this.socketClient.noteOutboundClientIgnore(ign.optLong("client", 0));
-                }
-                // V71 CHAT-SPAM FIX: MPV mode mein JS ka apna playstate (jittery
-                // mini-player state, 5s interval ACK) wire par BILKUL na jaye --
-                // wahi Java ki sahi mpv-state se takra kar server ko pause/play
-                // flip-flop karwata tha ("Ahmed Play, Ahmed Paused, ..." lambi
-                // line + galat naam). Sirf mpv ki sachchai wire par jayegi;
-                // ping/ignoring bookkeeping zaroorat ke liye rehne diya.
-                if (st.has("playstate") && this.socketClient.hasControllerMedia()) {
-                    st.remove("playstate");
-                    if (!st.has("ping") && !st.has("ignoringOnTheFly")) {
-                        return;
-                    }
-                    obj.put("State", st);
-                    this.socketClient.sendMessage(obj.toString() + "\r\n");
-                    return;
                 }
             }
             this.socketClient.sendMessage(payload + "\r\n");
