@@ -129,6 +129,24 @@ public class MainActivity extends BridgeActivity {
         setupWebView();
     }
 
+    /**
+     * V71 CHAT-SPAM FIX: local user intent (JS UI) ko server tak EXACTLY EK
+     * dafa pahunchao -- mpv ki sachchai ke saath, hamare username se. JS ka
+     * apna State publish bridge mein strip hota hai, is liye yahi wahid
+     * announcement path hai. 200ms delay taake mpv ka pause/seek settle ho.
+     */
+    private void announceLocal(final double seekTarget, final boolean pausedIntent, final boolean doSeek) {
+        if (this.syncplayBridge == null) return;
+        this.getWindow().getDecorView().postDelayed(() -> {
+            try {
+                if (this.mpvPlayerView == null || !this.mpvPlayerView.hasMedia()) return;
+                double pos = (doSeek && seekTarget >= 0) ? seekTarget : this.mpvPlayerView.getCurrentPosition();
+                boolean paused = doSeek ? this.mpvPlayerView.isPaused() : pausedIntent;
+                this.syncplayBridge.sendLocalState(pos, paused, doSeek);
+            } catch (Exception ignored) {}
+        }, 200);
+    }
+
     private void setupWebView() {
         try {
             WebView webView = getBridge() == null ? null : getBridge().getWebView();
@@ -470,6 +488,7 @@ public class MainActivity extends BridgeActivity {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
                     MainActivity.this.mpvPlayerView.play();
+                    MainActivity.this.announceLocal(-1, false, false);
                 }
             });
         }
@@ -479,6 +498,7 @@ public class MainActivity extends BridgeActivity {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
                     MainActivity.this.mpvPlayerView.setPaused(paused);
+                    MainActivity.this.announceLocal(-1, paused, false);
                 }
             });
         }
@@ -488,6 +508,7 @@ public class MainActivity extends BridgeActivity {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
                     MainActivity.this.mpvPlayerView.seekTo(seconds);
+                    MainActivity.this.announceLocal(seconds, false, true);
                 }
             });
         }
@@ -497,6 +518,7 @@ public class MainActivity extends BridgeActivity {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
                     MainActivity.this.mpvPlayerView.seekRelative(delta);
+                    MainActivity.this.announceLocal(-1, false, true);
                 }
             });
         }

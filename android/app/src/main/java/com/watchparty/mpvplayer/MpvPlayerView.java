@@ -477,6 +477,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     }
 
     private void renderHud() {
+        // V71: user ne green HUD hide karne ko kaha -- 200MB cache (options)
+        // bilkul chalta rehta hai, sirf overlay nahi dikhta.
+        if (this.debugHud != null) this.debugHud.setVisibility(android.view.View.GONE);
+        if (true) return;
         long gap = this.hudGap; double pos = this.hudPos;
         double posDelta = this.hudDelta; boolean paused = this.hudPaused;
         boolean buffering = this.hudBuf;

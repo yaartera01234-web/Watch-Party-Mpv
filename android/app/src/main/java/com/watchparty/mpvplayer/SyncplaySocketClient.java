@@ -115,6 +115,12 @@ public class SyncplaySocketClient {
         this.hasWebMedia = has;
     }
 
+    /** Kya native (MPV) player controller is waqt media chala raha hai? */
+    public boolean hasControllerMedia() {
+        SyncplayPlayerController pc = this.playerController;
+        return pc != null && pc.hasMedia();
+    }
+
     public void noteOutboundClientIgnore(long count) {
         if (count > this.clientIgnoring) {
             this.clientIgnoring = count;

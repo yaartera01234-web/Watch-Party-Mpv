@@ -107,6 +107,21 @@ public final class AndroidSyncplayBridge {
                 if (ign != null && ign.has("client")) {
                     this.socketClient.noteOutboundClientIgnore(ign.optLong("client", 0));
                 }
+                // V71 CHAT-SPAM FIX: MPV mode mein JS ka apna playstate (jittery
+                // mini-player state, 5s interval ACK) wire par BILKUL na jaye --
+                // wahi Java ki sahi mpv-state se takra kar server ko pause/play
+                // flip-flop karwata tha ("Ahmed Play, Ahmed Paused, ..." lambi
+                // line + galat naam). Sirf mpv ki sachchai wire par jayegi;
+                // ping/ignoring bookkeeping zaroorat ke liye rehne diya.
+                if (st.has("playstate") && this.socketClient.hasControllerMedia()) {
+                    st.remove("playstate");
+                    if (!st.has("ping") && !st.has("ignoringOnTheFly")) {
+                        return;
+                    }
+                    obj.put("State", st);
+                    this.socketClient.sendMessage(obj.toString() + "\r\n");
+                    return;
+                }
             }
             this.socketClient.sendMessage(payload + "\r\n");
         } catch (Exception e) {
