@@ -51,6 +51,13 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private int secondFlips = 0;
     private int lastShownSecond = -1;
     private int jump2s = 0;
+    // CULPRIT CATCHERS: 2s-jump ki asal wajah pakarne ke liye. seek = mpv ko har
+    // seek (khud sync ya remote), ff/rw = hamari autonomous sync seeks.
+    private int seekCount = 0;
+    private String lastSeekInfo = "-";
+    private int ffCount = 0;
+    private int rwCount = 0;
+    private String lastAct = "-";
 
     /**
      * SLOW-PEER PRIORITY: mpv ka 'paused-for-cache' -- yaani player ruka hua hai
@@ -195,8 +202,12 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             this.mpv.setOptionString("ao", "audiotrack,opensles");
             this.mpv.setOptionString("profile", "fast");
             this.mpv.setOptionString("video-sync", "audio");
-            this.mpv.setOptionString("demuxer-max-bytes", "67108864");
+            // 200MB BUFFER CACHE: desktop Syncplay ki tarah demuxer ko 200MiB tak
+            // ahead readahead rakhne do taake slow network par playback ruke nahi.
+            // (Pehle 64MB tha -- user ne desktop wala 200MB maanga.)
+            this.mpv.setOptionString("demuxer-max-bytes", "209715200");
             this.mpv.setOptionString("demuxer-max-back-bytes", "67108864");
+            this.mpv.setOptionString("demuxer-readahead-secs", "60");
             this.mpv.setOptionString("keep-open", "yes");
             this.mpv.setOptionString("input-default-bindings", "no");
             this.mpv.setOptionString("volume-max", "200");
@@ -361,8 +372,20 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     /**
      * DEBUG HUD -- screen ke ooper live numbers. Sirf napne ke liye.
      */
+    private long hudGap; private double hudPos; private double hudDelta;
+    private boolean hudPaused; private boolean hudBuf;
+
     private void updateDebugHud(long gap, double pos, double posDelta,
                                 boolean paused, boolean buffering) {
+        this.hudGap = gap; this.hudPos = pos; this.hudDelta = posDelta;
+        this.hudPaused = paused; this.hudBuf = buffering;
+        renderHud();
+    }
+
+    private void renderHud() {
+        long gap = this.hudGap; double pos = this.hudPos;
+        double posDelta = this.hudDelta; boolean paused = this.hudPaused;
+        boolean buffering = this.hudBuf;
         try {
             if (this.debugHud == null) {
                 this.debugHud = new android.widget.TextView(getContext());
@@ -386,11 +409,22 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
               + "dikhta=" + String.format(java.util.Locale.US, "%02d:%02d",
                     (int) (pos / 60), ((int) pos) % 60)
               + "   badla x" + this.secondFlips + "   2s-jump x" + this.jump2s + "\n"
-              + "paused=" + paused + "  buffering=" + buffering + "  polls=" + this.pollCount;
+              + "paused=" + paused + "  buffering=" + buffering + "  polls=" + this.pollCount + "\n"
+              + "seek x" + this.seekCount + " (" + this.lastSeekInfo + "s)"
+              + "  ff x" + this.ffCount + "  rw x" + this.rwCount + "  act=" + this.lastAct;
             this.debugHud.setText(s);
             this.debugHud.bringToFront();
         } catch (Throwable ignored) {
         }
+    }
+
+    /** DEBUG: sync action counter (MainActivity syncplay-sync-action se bhejta hai) */
+    public void noteSyncAction(String action, String by) {
+        if (action == null) return;
+        if ("fast-forward".equals(action)) this.ffCount++;
+        else if ("rewind".equals(action)) this.rwCount++;
+        this.lastAct = action + (by == null ? "" : "(" + by + ")");
+        renderHud();
     }
 
     /** DEBUG: counters sifar karo */
@@ -432,6 +466,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     }
 
     public void seekTo(double seconds) {
+        // DEBUG: har seek ko gino taake 2s-jump ka culprit pakra jaye
+        this.seekCount++;
+        double d = seconds - (this.lastPollPos < 0 ? 0.0 : this.lastPollPos);
+        this.lastSeekInfo = String.format(java.util.Locale.US, "%+.1f", d);
         if (this.coreReady && this.mpv != null) {
             try {
                 this.mpv.setPropertyDouble("time-pos", Math.max(0.0, seconds));

@@ -213,6 +213,15 @@ public class MainActivity extends BridgeActivity {
     }
 
     public void dispatchSyncplayEvent(final String event, final String payload) {
+        // DEBUG HUD: sync actions ko view tak pohnchao taake culprit pakra jaye
+        if ("syncplay-sync-action".equals(event) && payload != null) {
+            try {
+                JSONObject jo = new JSONObject(payload);
+                final String act = jo.optString("action", "");
+                final String by = jo.optString("by", "");
+                runOnUiThread(() -> this.mpvPlayerView.noteSyncAction(act, by));
+            } catch (Exception ignored) {}
+        }
         runOnUiThread(() -> {
             try {
                 WebView webView = getBridge() == null ? null : getBridge().getWebView();

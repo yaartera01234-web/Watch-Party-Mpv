@@ -305,7 +305,9 @@ public class SyncplaySocketClient {
                                 this.speedChanged = false;
                                 notifySyncAction("speed-reset", setBy, roomPosition, paused);
                             }
-                        } else if (diff > REWIND_THRESHOLD && !doSeek) {
+                        } else if (diff > REWIND_THRESHOLD && !doSeek && !paused) {
+                            // PAUSE-SAFE: room paused hone par position by definition
+                            // frozen hai -- autonomous seek sirf flapping paida karega.
                             // Local client is ahead by > 4s (rewind)
                             if (this.speedChanged) {
                                 if (pc != null) pc.executeSpeed(1.0);
@@ -315,7 +317,8 @@ public class SyncplaySocketClient {
                                 pc.executeSeek(roomPosition);
                             }
                             notifySyncAction("rewind", setBy, roomPosition, paused);
-                        } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek) {
+                        } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek && !paused) {
+                            // PAUSE-SAFE: paused room mein autonomous seek nahi.
                             // SLOW-PEER PRIORITY: local client is behind the slowest room
                             // position by more than 4s. At this point the gap is too wide to
                             // close by speed alone, so a seek is the last resort. Anything
