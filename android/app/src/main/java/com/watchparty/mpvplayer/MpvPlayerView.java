@@ -117,9 +117,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                     MpvPlayerView.this.jsProbeCount = 0;
                     try {
                         MpvPlayerView.this.jsEmitter.eval(
-                            "(function(){var m=window.wpC4?'wpC4':(window.wpC3?'wpC3':'orig');"
+                            "(function(){var m=window.wpC5?'wpC5':(window.wpC4?'wpC4':(window.wpC3?'wpC3':'orig'));"
                             + "var d=document.querySelector('div[title=\"Click to toggle remaining time\"] span');"
-                            + "return m+'|'+(d?d.textContent:'-')})()",
+                            + "var q=window.__wpC||{};return m+'|'+(d?d.textContent:'-')"
+                            + "+'|m='+(q.m!=null?Math.floor(q.m):'-')+'|N='+(window.__wpN||0)})()",
                             new android.webkit.ValueCallback<String>() {
                                 @Override public void onReceiveValue(String v) {
                                     MpvPlayerView.this.jsMarker =
