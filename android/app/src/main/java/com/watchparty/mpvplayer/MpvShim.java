@@ -45,6 +45,7 @@ public class MpvShim {
     public void setPropertyString(String n, String v) { MPVLib.INSTANCE.setPropertyString(n, v); }
     public void setPropertyBoolean(String n, boolean v) { MPVLib.INSTANCE.setPropertyBoolean(n, v); }
     public void setPropertyDouble(String n, double v) { MPVLib.INSTANCE.setPropertyDouble(n, v); }
+    public void setPropertyInt(String n, int v) { MPVLib.INSTANCE.setPropertyInt(n, v); }
     public String getPropertyString(String n) { return MPVLib.INSTANCE.getPropertyString(n); }
     public Double getPropertyDouble(String n) { return MPVLib.INSTANCE.getPropertyDouble(n); }
     public Boolean getPropertyBoolean(String n) { return MPVLib.INSTANCE.getPropertyBoolean(n); }
@@ -55,7 +56,7 @@ public class MpvShim {
         this.obs = o;
         MPVLib.addObserver(this.forward);
     }
-    public void removeObserver() {
+    public void removeObserver(EventObserver o) {
         MPVLib.removeObserver(this.forward);
         this.obs = null;
     }
