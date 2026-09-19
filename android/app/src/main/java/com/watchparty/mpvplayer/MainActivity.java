@@ -487,6 +487,7 @@ public class MainActivity extends BridgeActivity {
         public void mpvPlay() {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
+                    MainActivity.this.syncplayBridge.notifyLocalIntent();
                     MainActivity.this.mpvPlayerView.play();
                     MainActivity.this.announceLocal(-1, false, false);
                 }
@@ -497,6 +498,7 @@ public class MainActivity extends BridgeActivity {
         public void mpvPause(final boolean paused) {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
+                    MainActivity.this.syncplayBridge.notifyLocalIntent();
                     MainActivity.this.mpvPlayerView.setPaused(paused);
                     MainActivity.this.announceLocal(-1, paused, false);
                 }
@@ -507,6 +509,7 @@ public class MainActivity extends BridgeActivity {
         public void mpvSeekTo(final double seconds) {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
+                    MainActivity.this.syncplayBridge.notifyLocalIntent();
                     MainActivity.this.mpvPlayerView.seekTo(seconds);
                     MainActivity.this.announceLocal(seconds, false, true);
                 }
@@ -517,6 +520,7 @@ public class MainActivity extends BridgeActivity {
         public void mpvSeekRelative(final double delta) {
             MainActivity.this.runOnUiThread(() -> {
                 if (MainActivity.this.mpvPlayerView != null) {
+                    MainActivity.this.syncplayBridge.notifyLocalIntent();
                     MainActivity.this.mpvPlayerView.seekRelative(delta);
                     MainActivity.this.announceLocal(-1, false, true);
                 }

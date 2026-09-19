@@ -94,6 +94,11 @@ public final class AndroidSyncplayBridge {
         this.socketClient.sendLocalState(position, paused, doSeek);
     }
 
+    /** V73: local intent se PEHLE ACK suppression window kholo. */
+    public void notifyLocalIntent() {
+        this.socketClient.localChangeStarting();
+    }
+
     @JavascriptInterface
     public void sendMessage(String topic, String payload) {
         if (payload == null || payload.trim().isEmpty()) {

@@ -121,6 +121,18 @@ public class SyncplaySocketClient {
         return pc != null && pc.hasMedia();
     }
 
+    /**
+     * V73 SEEK-YANK FIX: local intent (pause/play/seek) ke FORAN baad mpv ki
+     * position transient hoti hai (seek ke dauran time-pos 0 parhta hai). Us
+     * fragile window mein koi bhi outbound ACK purani/0 position report kar
+     * ke server ka min(watchers) zero par kheench leta tha -> rewind yank.
+     * Counter pehle barhao taake window ke dauran playstate ACK suppress rahe
+     * (server echo par reset ho jata hai, jaisa pre-V71 kaam karta tha).
+     */
+    public void localChangeStarting() {
+        this.clientIgnoring++;
+    }
+
     public void noteOutboundClientIgnore(long count) {
         if (count > this.clientIgnoring) {
             this.clientIgnoring = count;
