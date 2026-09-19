@@ -37,6 +37,15 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private final Handler poll = new Handler(Looper.getMainLooper());
     private boolean polling = false;
 
+    /**
+     * SLOW-PEER PRIORITY: mpv ka 'paused-for-cache' -- yaani player ruka hua hai
+     * kyunke cache khali ho gaya (buffering). Poll loop ise pehle se parhta tha
+     * aur JS ko bhejta tha, lekin sync layer tak kabhi nahi pohanchta tha.
+     * Ab SyncplaySocketClient ise parhta hai taake buffering ke dauran hum room
+     * ko apni ruki hui position report karein, aagay barhti hui nahi.
+     */
+    private volatile boolean buffering = false;
+
     private final Runnable pollTask = new Runnable() {
         @Override
         public void run() {
@@ -48,6 +57,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 Integer vol = mpv.getPropertyInt("volume");
                 Double spd = mpv.getPropertyDouble("speed");
                 Boolean buf = mpv.getPropertyBoolean("paused-for-cache");
+                MpvPlayerView.this.buffering = (buf != null && buf);
 
                 JSONObject o = new JSONObject();
                 o.put("position", pos == null ? 0.0 : pos);
@@ -312,6 +322,25 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         } catch (Throwable ignored) {
             return true;
         }
+    }
+
+    /**
+     * SLOW-PEER PRIORITY: kya mpv is waqt cache bharne ka intezaar kar raha hai.
+     * Poll loop (250ms) ise refresh karta hai. Live property bhi parhi jati hai
+     * taake do poll ke darmiyan ka waqfa bhi cover ho jaye.
+     */
+    public boolean isBuffering() {
+        if (!this.coreReady || this.mpv == null) return false;
+        try {
+            Boolean b = this.mpv.getPropertyBoolean("paused-for-cache");
+            if (b != null) {
+                this.buffering = b;
+                return b;
+            }
+        } catch (Throwable ignored) {
+            // property abhi mayassar nahi -- aakhri poll wali value par bharosa karo
+        }
+        return this.buffering;
     }
 
     public boolean hasMedia() {

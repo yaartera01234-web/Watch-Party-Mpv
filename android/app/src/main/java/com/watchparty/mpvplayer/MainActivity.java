@@ -93,6 +93,13 @@ public class MainActivity extends BridgeActivity {
             }
 
             @Override
+            public boolean isBuffering() {
+                return MainActivity.this.mpvPlayerView != null
+                        && MainActivity.this.mpvPlayerView.hasMedia()
+                        && MainActivity.this.mpvPlayerView.isBuffering();
+            }
+
+            @Override
             public void executeSeek(final double seconds) {
                 MainActivity.this.runOnUiThread(() -> {
                     if (MainActivity.this.mpvPlayerView != null) {

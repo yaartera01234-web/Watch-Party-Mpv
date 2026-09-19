@@ -56,6 +56,13 @@ public class SyncplaySocketClient {
         void executeSeek(double seconds);
         void executePause(boolean paused);
         void executeSpeed(double speed);
+
+        /**
+         * SLOW-PEER PRIORITY: kya player is waqt buffer kar raha hai (mpv ka
+         * 'paused-for-cache'). Default false rakha hai taake koi bhi purana
+         * implementation bina badle kaam karta rahe.
+         */
+        default boolean isBuffering() { return false; }
     }
 
     public interface SyncplayListener {
@@ -87,6 +94,9 @@ public class SyncplaySocketClient {
     private volatile double lastServerTime = 0.0;
     private volatile boolean firstSyncNeeded = true;
     private volatile boolean speedChanged = false;
+    /** SLOW-PEER PRIORITY: buffering ke dauran position freeze karne ke liye */
+    private volatile boolean wasBuffering = false;
+    private volatile double bufferFreezePosition = 0.0;
     private volatile String currentUsername = "";
     private volatile Boolean lastAckPaused = null;
 
@@ -134,6 +144,8 @@ public class SyncplaySocketClient {
             this.currentUsername = username != null ? username : "";
             this.firstSyncNeeded = true;
             this.speedChanged = false;
+            this.wasBuffering = false;
+            this.bufferFreezePosition = 0.0;
             this.clientIgnoring = 0;
             this.serverIgnoring = 0;
             this.lastGlobalPosition = null;
@@ -280,7 +292,20 @@ public class SyncplaySocketClient {
                     } else if (localHasMedia) {
                         double diff = localPos - roomPosition;
 
-                        if (diff > REWIND_THRESHOLD && !doSeek) {
+                        // SLOW-PEER PRIORITY: agar HUM khud buffer kar rahe hain to hum hi
+                        // slow peer hain. Is halat mein na khud ko dheema karna hai (pehle
+                        // se ruke hue hain) aur na hi aagay seek karna hai -- seek karne se
+                        // cache dobara khali hota hai aur buffering ka na-khatam hone wala
+                        // chakkar shuru ho jata hai. Bas throttle hata kar khamosh raho;
+                        // baqi room ko hamari freeze position se pata chal jayega.
+                        boolean selfBuffering = (pc != null && pc.hasMedia() && pc.isBuffering());
+                        if (selfBuffering) {
+                            if (this.speedChanged) {
+                                if (pc != null) pc.executeSpeed(1.0);
+                                this.speedChanged = false;
+                                notifySyncAction("speed-reset", setBy, roomPosition, paused);
+                            }
+                        } else if (diff > REWIND_THRESHOLD && !doSeek) {
                             // Local client is ahead by > 4s (rewind)
                             if (this.speedChanged) {
                                 if (pc != null) pc.executeSpeed(1.0);
@@ -384,6 +409,39 @@ public class SyncplaySocketClient {
             if (hasMedia) {
                 pos = (pc != null && pc.hasMedia()) ? pc.getCurrentPosition() : this.lastWebPosition;
                 paused = (pc != null && pc.hasMedia()) ? pc.isPaused() : this.lastWebPaused;
+
+                // SLOW-PEER PRIORITY -- buffering ke dauran apni position FREEZE karo.
+                //
+                // Jab mpv ka cache khali hota hai (paused-for-cache) to video ruk jati
+                // hai, lekin mpv ka 'pause' flag false hi rehta hai kyunke user ne pause
+                // nahi kiya. Purana code isi liye room ko "main chal raha hoon" batata
+                // tha, aur server (_updatePositionByAge) hamari ruki hui position mein
+                // network delay bhi jama kar deta tha -- yaani hum haqiqat se AAGAY
+                // report hote the. Nateeja: room ka min(watchers) hamein slow peer
+                // maanne mein der karta tha aur tez peer be-rok aagay nikalta rehta.
+                //
+                // Ab buffering shuru hote hi hum wahi position dobara bhejte hain jahan
+                // ruke the. Server use aagay nahi barhata, is liye tez peer ko foran
+                // pata chal jata hai ke room peechay ruk gaya hai aur wo 0.95x par aa
+                // jata hai -- ek pooray ping ka intezaar kiye baghair.
+                //
+                // AHEM: 'paused' ko HAATH NAHI lagate. Agar hum paused=true bhejte to
+                // server ka __hasPauseChanged() trigger hota aur POORA ROOM pause ho
+                // jata (server.py updateState -> room.setPaused), saath hi doosre peer
+                // ke chat mein jhoota "pause kiya" message bhi jata. Sirf position
+                // rokna hi kaafi hai aur mehfooz bhi.
+                boolean nowBuffering = (pc != null && pc.hasMedia() && pc.isBuffering());
+                if (nowBuffering && !paused) {
+                    if (!this.wasBuffering) {
+                        // Buffering abhi shuru hui -- yahin apni jagah pakad lo
+                        this.bufferFreezePosition = pos;
+                        this.wasBuffering = true;
+                    }
+                    pos = this.bufferFreezePosition;
+                } else if (this.wasBuffering) {
+                    // Cache bhar gaya -- dobara asal position report karna shuru
+                    this.wasBuffering = false;
+                }
             } else if (this.lastGlobalPosition != null) {
                 // When we have no media loaded, report room position to avoid dragging room to 0
                 pos = this.lastGlobalPosition;
