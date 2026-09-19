@@ -293,20 +293,36 @@ public class SyncplaySocketClient {
                     if (this.firstSyncNeeded && localHasMedia) {
                         this.firstSyncNeeded = false;
                         if (pc != null && pc.hasMedia()) {
-                            pc.executeSeek(roomPosition);
+                            // V75 ZERO-YANK GUARD: connection toot kar reconnect
+                            // hone par khali/stale room position ~0 hoti hai --
+                            // aur first-sync us 0 par video seek kar deta tha
+                            // ("Syncplay send failed" ke baad zero). Agar hum
+                            // 60s+ par chal rahe hain aur room ~0 keh raha hai to
+                            // wo garbage hai: seek NA karo, apni jagah raho.
+                            double lp = pc.getCurrentPosition();
+                            boolean garbage = roomPosition < 5.0 && lp > 60.0;
+                            if (!garbage) {
+                                pc.executeSeek(roomPosition);
+                            }
                             pc.executePause(paused);
                         }
                         notifySyncAction("first-sync", setBy, roomPosition, paused);
                     } else if (doSeek && !setBy.equals(this.currentUsername)) {
                         // Someone seeked
-                        if (this.speedChanged) {
-                            if (pc != null) pc.executeSpeed(1.0);
-                            this.speedChanged = false;
+                        // V75 GARBAGE GUARD: stale/ghost peer ka doSeek ~0 ho aur
+                        // hum 60s+ par hon to follow NA karo (zero yank band).
+                        double lp2 = (pc != null && pc.hasMedia()) ? pc.getCurrentPosition() : localPos;
+                        boolean garbage = !paused && roomPosition < 5.0 && lp2 > 60.0;
+                        if (!garbage) {
+                            if (this.speedChanged) {
+                                if (pc != null) pc.executeSpeed(1.0);
+                                this.speedChanged = false;
+                            }
+                            if (pc != null && pc.hasMedia()) {
+                                pc.executeSeek(roomPosition);
+                            }
+                            notifySyncAction("seek", setBy, roomPosition, paused);
                         }
-                        if (pc != null && pc.hasMedia()) {
-                            pc.executeSeek(roomPosition);
-                        }
-                        notifySyncAction("seek", setBy, roomPosition, paused);
                     } else if (localHasMedia) {
                         double diff = localPos - roomPosition;
 
