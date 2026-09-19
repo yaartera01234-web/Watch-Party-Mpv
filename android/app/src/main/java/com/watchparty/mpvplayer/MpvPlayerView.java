@@ -38,6 +38,21 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private boolean polling = false;
 
     /**
+     * DEBUG HUD -- sirf napne ke liye. Screen par live numbers dikhata hai taake
+     * andaza lagane ke bajaye asal data mile: har poll ka gap (ms), mpv ki asal
+     * time-pos, aur paused flag. Release build se hata diya jayega.
+     */
+    private android.widget.TextView debugHud;
+    private long lastPollAt = 0L;
+    private double lastPollPos = -1.0;
+    private int pollCount = 0;
+    private long maxGap = 0L;
+    private int gapOver400 = 0;
+    private int secondFlips = 0;
+    private int lastShownSecond = -1;
+    private int jump2s = 0;
+
+    /**
      * SLOW-PEER PRIORITY: mpv ka 'paused-for-cache' -- yaani player ruka hua hai
      * kyunke cache khali ho gaya (buffering). Poll loop ise pehle se parhta tha
      * aur JS ko bhejta tha, lekin sync layer tak kabhi nahi pohanchta tha.
@@ -58,6 +73,25 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 Double spd = mpv.getPropertyDouble("speed");
                 Boolean buf = mpv.getPropertyBoolean("paused-for-cache");
                 MpvPlayerView.this.buffering = (buf != null && buf);
+
+                // ---- DEBUG HUD measurement ----
+                long nowMs = android.os.SystemClock.elapsedRealtime();
+                long gap = (lastPollAt == 0L) ? 0L : (nowMs - lastPollAt);
+                lastPollAt = nowMs;
+                pollCount++;
+                if (gap > maxGap) maxGap = gap;
+                if (gap > 400) gapOver400++;
+                double dpos = (pos == null ? 0.0 : pos);
+                boolean dpaused = (paused != null && paused);
+                int shownSec = (int) Math.floor(dpos);
+                if (lastShownSecond >= 0 && shownSec != lastShownSecond) {
+                    secondFlips++;
+                    if (Math.abs(shownSec - lastShownSecond) >= 2) jump2s++;
+                }
+                lastShownSecond = shownSec;
+                double posDelta = (lastPollPos < 0) ? 0.0 : (dpos - lastPollPos);
+                lastPollPos = dpos;
+                updateDebugHud(gap, dpos, posDelta, dpaused, (buf != null && buf));
 
                 JSONObject o = new JSONObject();
                 o.put("position", pos == null ? 0.0 : pos);
@@ -322,6 +356,50 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         } catch (Throwable ignored) {
             return true;
         }
+    }
+
+    /**
+     * DEBUG HUD -- screen ke ooper live numbers. Sirf napne ke liye.
+     */
+    private void updateDebugHud(long gap, double pos, double posDelta,
+                                boolean paused, boolean buffering) {
+        try {
+            if (this.debugHud == null) {
+                this.debugHud = new android.widget.TextView(getContext());
+                this.debugHud.setTextColor(0xFF00FF66);
+                this.debugHud.setBackgroundColor(0xCC000000);
+                this.debugHud.setTextSize(10.0f);
+                this.debugHud.setPadding(10, 6, 10, 6);
+                this.debugHud.setTypeface(android.graphics.Typeface.MONOSPACE);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT);
+                lp.gravity = Gravity.TOP | Gravity.START;
+                lp.topMargin = 4;
+                lp.leftMargin = 4;
+                addView(this.debugHud, lp);
+            }
+            String s =
+                "POLL gap=" + gap + "ms  max=" + this.maxGap + "ms  >400ms x" + this.gapOver400 + "\n"
+              + "time-pos=" + String.format(java.util.Locale.US, "%.3f", pos)
+              + "  delta=" + String.format(java.util.Locale.US, "%+.3f", posDelta) + "\n"
+              + "dikhta=" + String.format(java.util.Locale.US, "%02d:%02d",
+                    (int) (pos / 60), ((int) pos) % 60)
+              + "   badla x" + this.secondFlips + "   2s-jump x" + this.jump2s + "\n"
+              + "paused=" + paused + "  buffering=" + buffering + "  polls=" + this.pollCount;
+            this.debugHud.setText(s);
+            this.debugHud.bringToFront();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** DEBUG: counters sifar karo */
+    public void resetDebugStats() {
+        this.maxGap = 0L;
+        this.gapOver400 = 0;
+        this.secondFlips = 0;
+        this.jump2s = 0;
+        this.pollCount = 0;
     }
 
     /**
