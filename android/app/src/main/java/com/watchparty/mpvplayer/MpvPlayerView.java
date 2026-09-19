@@ -11,8 +11,6 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.widget.FrameLayout;
-import is.xyz.mpv.MPV;
-import is.xyz.mpv.MPVNode;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -27,7 +25,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         void eval(String script, android.webkit.ValueCallback<String> cb);
     }
 
-    private MPV mpv;
+    private MpvShim mpv;
     private boolean coreReady = false;
     private boolean surfaceReady = false;
     private String pendingVideoUrl = null;
@@ -90,11 +88,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                     Double ct = mpv.getPropertyDouble("demuxer-cache-time");
                     if (ct != null && pos != null) cSec = ct - pos;
                 } catch (Throwable ignored) {}
-                try {
-                    MPVNode st = mpv.getPropertyNode("demuxer-cache-state");
-                    if (st != null && st.get("fw-bytes") != null)
-                        cMB = st.get("fw-bytes").asInt() / 1048576.0;
-                } catch (Throwable ignored) {}
+                // (libmpvkt: node API nahi -- MB meter optional, seconds kaafi hain)
                 MpvPlayerView.this.hudCacheSec = cSec;
                 MpvPlayerView.this.hudCacheMB = cMB;
 
@@ -200,16 +194,12 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         }
     };
 
-    private final MPV.EventObserver observer = new MPV.EventObserver() {
+    private final MpvShim.EventObserver observer = new MpvShim.EventObserver() {
         @Override public void eventProperty(String property) {}
         @Override public void eventProperty(String property, long value) {}
-        @Override public void eventProperty(String property, boolean value) {}
-        @Override public void eventProperty(String property, String value) {}
-        @Override public void eventProperty(String property, double value) {}
-        @Override public void eventProperty(String property, MPVNode value) {}
 
         @Override
-        public void event(int eventId, MPVNode node) {
+        public void event(int eventId) {
             if (eventId == MPV_EVENT_START_FILE) {
                 if (jsEmitter != null) jsEmitter.emit("mpv-loading", "{}");
             } else if (eventId == MPV_EVENT_FILE_LOADED) {
@@ -272,7 +262,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     private void ensureCore() {
         if (this.coreReady) return;
         try {
-            this.mpv = new MPV();
+            this.mpv = new MpvShim();
             this.mpv.create(getContext().getApplicationContext());
 
             this.mpv.setOptionString("vo", "gpu");
@@ -694,35 +684,35 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             out.put("sub", subArr);
 
             if (this.coreReady && this.mpv != null) {
-                MPVNode trackList = this.mpv.getPropertyNode("track-list");
-                if (trackList != null && trackList.asArray() != null) {
-                    for (MPVNode item : trackList.asArray()) {
-                        String type = item.get("type") != null ? item.get("type").asString() : "";
-                        if (!"audio".equals(type) && !"sub".equals(type)) continue;
+                // yuroyami-style indexed track-list read (libmpvkt mein node API nahi)
+                for (int i = 0; i < 64; i++) {
+                    String type = this.mpv.getPropertyString("track-list/" + i + "/type");
+                    if (type == null) break;
+                    if (!"audio".equals(type) && !"sub".equals(type)) continue;
 
-                        long id = item.get("id") != null ? item.get("id").asInt().longValue() : -1L;
-                        String lang = item.get("lang") != null ? item.get("lang").asString() : "";
-                        String title = item.get("title") != null ? item.get("title").asString() : "";
-                        String codec = item.get("codec") != null ? item.get("codec").asString() : "";
-                        boolean selected = Boolean.TRUE.equals(item.get("selected") != null ? item.get("selected").asBoolean() : false);
-                        boolean forced = Boolean.TRUE.equals(item.get("forced") != null ? item.get("forced").asBoolean() : false);
-                        boolean external = Boolean.TRUE.equals(item.get("external") != null ? item.get("external").asBoolean() : false);
+                    Integer idI = this.mpv.getPropertyInt("track-list/" + i + "/id");
+                    long id = idI != null ? idI.longValue() : (long) i;
+                    String lang = this.mpv.getPropertyString("track-list/" + i + "/lang");
+                    String title = this.mpv.getPropertyString("track-list/" + i + "/title");
+                    String codec = this.mpv.getPropertyString("track-list/" + i + "/codec");
+                    boolean selected = Boolean.TRUE.equals(this.mpv.getPropertyBoolean("track-list/" + i + "/selected"));
+                    boolean forced = Boolean.TRUE.equals(this.mpv.getPropertyBoolean("track-list/" + i + "/forced"));
+                    boolean external = Boolean.TRUE.equals(this.mpv.getPropertyBoolean("track-list/" + i + "/external"));
 
-                        String name = (title != null && !title.isEmpty()) ? title
-                                : ((lang != null && !lang.isEmpty()) ? lang : "Track " + id);
+                    String name = (title != null && !title.isEmpty()) ? title
+                            : ((lang != null && !lang.isEmpty()) ? lang : "Track " + id);
 
-                        JSONObject t = new JSONObject();
-                        t.put("id", id);
-                        t.put("name", name);
-                        t.put("lang", lang != null ? lang : "");
-                        t.put("codec", codec != null ? codec : "");
-                        t.put("selected", selected);
-                        t.put("forced", forced);
-                        t.put("external", external);
+                    JSONObject t = new JSONObject();
+                    t.put("id", id);
+                    t.put("name", name);
+                    t.put("lang", lang != null ? lang : "");
+                    t.put("codec", codec != null ? codec : "");
+                    t.put("selected", selected);
+                    t.put("forced", forced);
+                    t.put("external", external);
 
-                        if ("audio".equals(type)) audioArr.put(t);
-                        else subArr.put(t);
-                    }
+                    if ("audio".equals(type)) audioArr.put(t);
+                    else subArr.put(t);
                 }
             }
         } catch (Throwable t) {
@@ -744,21 +734,20 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
         JSONArray out = new JSONArray();
         if (this.coreReady && this.mpv != null) {
             try {
-                MPVNode node = this.mpv.getPropertyNode("chapter-list");
-                if (node != null && node.asArray() != null) {
-                    int idx = 1;
-                    for (MPVNode item : node.asArray()) {
-                        String title = item.get("title") != null ? item.get("title").asString() : null;
-                        double time = item.get("time") != null && item.get("time").asDouble() != null ? item.get("time").asDouble() : 0.0;
-                        if (title == null || title.isEmpty()) {
-                            title = "Chapter " + idx;
-                        }
-                        JSONObject c = new JSONObject();
-                        c.put("title", title);
-                        c.put("time", time);
-                        out.put(c);
-                        idx++;
+                // yuroyami-style indexed chapter-list read
+                int idx = 1;
+                for (int i = 0; i < 512; i++) {
+                    Double time = this.mpv.getPropertyDouble("chapter-list/" + i + "/time");
+                    if (time == null) break;
+                    String title = this.mpv.getPropertyString("chapter-list/" + i + "/title");
+                    if (title == null || title.isEmpty()) {
+                        title = "Chapter " + idx;
                     }
+                    JSONObject c = new JSONObject();
+                    c.put("title", title);
+                    c.put("time", time);
+                    out.put(c);
+                    idx++;
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "chapters parse fail", t);

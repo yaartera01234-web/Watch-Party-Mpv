@@ -15,6 +15,10 @@ allprojects {
         google()
         mavenCentral()
         maven { url 'https://jitpack.io' }
+        maven {
+            url 'https://yuroyami.github.io/maven'
+            content { includeGroup 'io.github.yuroyami' }
+        }
     }
 }
 
