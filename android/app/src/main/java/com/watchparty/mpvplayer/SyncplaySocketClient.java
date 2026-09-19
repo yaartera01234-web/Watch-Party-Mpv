@@ -115,24 +115,6 @@ public class SyncplaySocketClient {
         this.hasWebMedia = has;
     }
 
-    /** Kya native (MPV) player controller is waqt media chala raha hai? */
-    public boolean hasControllerMedia() {
-        SyncplayPlayerController pc = this.playerController;
-        return pc != null && pc.hasMedia();
-    }
-
-    /**
-     * V73 SEEK-YANK FIX: local intent (pause/play/seek) ke FORAN baad mpv ki
-     * position transient hoti hai (seek ke dauran time-pos 0 parhta hai). Us
-     * fragile window mein koi bhi outbound ACK purani/0 position report kar
-     * ke server ka min(watchers) zero par kheench leta tha -> rewind yank.
-     * Counter pehle barhao taake window ke dauran playstate ACK suppress rahe
-     * (server echo par reset ho jata hai, jaisa pre-V71 kaam karta tha).
-     */
-    public void localChangeStarting() {
-        this.clientIgnoring++;
-    }
-
     public void noteOutboundClientIgnore(long count) {
         if (count > this.clientIgnoring) {
             this.clientIgnoring = count;
@@ -293,12 +275,10 @@ public class SyncplaySocketClient {
                     if (this.firstSyncNeeded && localHasMedia) {
                         this.firstSyncNeeded = false;
                         if (pc != null && pc.hasMedia()) {
-                            // V75 ZERO-YANK GUARD: connection toot kar reconnect
-                            // hone par khali/stale room position ~0 hoti hai --
-                            // aur first-sync us 0 par video seek kar deta tha
-                            // ("Syncplay send failed" ke baad zero). Agar hum
-                            // 60s+ par chal rahe hain aur room ~0 keh raha hai to
-                            // wo garbage hai: seek NA karo, apni jagah raho.
+                            // V76 (#54 + seatbelt): reconnect par khali/stale room
+                            // position ~0 hoti hai -- 60s+ par chalte hue us 0 par
+                            // seek karna "Syncplay send failed -> zero" tha. Garbage
+                            // ho to seek skip, apni jagah raho.
                             double lp = pc.getCurrentPosition();
                             boolean garbage = roomPosition < 5.0 && lp > 60.0;
                             if (!garbage) {
@@ -309,8 +289,8 @@ public class SyncplaySocketClient {
                         notifySyncAction("first-sync", setBy, roomPosition, paused);
                     } else if (doSeek && !setBy.equals(this.currentUsername)) {
                         // Someone seeked
-                        // V75 GARBAGE GUARD: stale/ghost peer ka doSeek ~0 ho aur
-                        // hum 60s+ par hon to follow NA karo (zero yank band).
+                        // V76 seatbelt: stale peer ka doSeek ~0 garbage hai jab hum
+                        // 60s+ par hon -- follow na karo (zero yank band).
                         double lp2 = (pc != null && pc.hasMedia()) ? pc.getCurrentPosition() : localPos;
                         boolean garbage = !paused && roomPosition < 5.0 && lp2 > 60.0;
                         if (!garbage) {
@@ -339,32 +319,29 @@ public class SyncplaySocketClient {
                                 this.speedChanged = false;
                                 notifySyncAction("speed-reset", setBy, roomPosition, paused);
                             }
-                        } else if (diff > REWIND_THRESHOLD && !doSeek && !paused) {
-                            // V74 NO-YANK: autonomous BACKWARD seek sarasar KHATAM.
-                            // Ye branch hi "video zero pe wapas" ka aakhri zariya
-                            // tha -- jab bhi room-position kisi stale/garbage state
-                            // (0/15) par hoti, hum khud ko wahan seek kar lete.
-                            // Slow-peer priority ke usool se bhi khud ko peeche
-                            // kheenchna hamesha galat tha. Ab hum aagay hon to
-                            // sirf speed reset hoti hai; seek sirf dost ke EXPLICIT
-                            // doSeek par.
+                        } else if (diff > REWIND_THRESHOLD && !doSeek) {
+                            // V76 (#54 + seatbelt): autonomous BACKWARD seek band --
+                            // yehi branch stale room-position par video ko zero/peechay
+                            // kheenchta tha. Aagay hone par sirf speed reset; seek
+                            // sirf dost ke explicit doSeek par.
                             if (this.speedChanged) {
                                 if (pc != null) pc.executeSpeed(1.0);
                                 this.speedChanged = false;
                             }
-                        } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek && !paused) {
-                            // YUROYAMI RULE (SyncDecision.kt): "In a normal room everyone can
-                            // control, so the room follows its slowest member instead."
-                            // Normal room mein forced fast-forward seek KABHI nahi -- desktop
-                            // Syncplay aur yuroyami dono sirf controlled rooms mein yank karte
-                            // hain. Hamara yahi autonomous seek MPV player ko har buffering
-                            // stall ke baad aagay phek deta tha = jhatke + 2s jump. Ab hum
-                            // slow peer hain to server ka min(watchers) room ko hamare paas
-                            // rokta hai; tez peer khud 0.95x par aata hai. Koi yank nahi.
+                        } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek) {
+                            // SLOW-PEER PRIORITY: local client is behind the slowest room
+                            // position by more than 4s. At this point the gap is too wide to
+                            // close by speed alone, so a seek is the last resort. Anything
+                            // smaller is handled by slowing the FAST peers down instead of
+                            // yanking this (weak-connection) peer forward.
+                            if (pc != null && pc.hasMedia()) {
+                                pc.executeSeek(roomPosition + FASTFORWARD_EXTRA_TIME);
+                            }
                             if (this.speedChanged) {
-                                if (pc != null && pc.hasMedia()) pc.executeSpeed(1.0);
+                                if (pc != null) pc.executeSpeed(1.0);
                                 this.speedChanged = false;
                             }
+                            notifySyncAction("fast-forward", setBy, roomPosition + FASTFORWARD_EXTRA_TIME, paused);
                         } else if (!paused && !doSeek) {
                             // Subtle catch-up via playback speed adjustment.
                             //

@@ -94,11 +94,6 @@ public final class AndroidSyncplayBridge {
         this.socketClient.sendLocalState(position, paused, doSeek);
     }
 
-    /** V73: local intent se PEHLE ACK suppression window kholo. */
-    public void notifyLocalIntent() {
-        this.socketClient.localChangeStarting();
-    }
-
     @JavascriptInterface
     public void sendMessage(String topic, String payload) {
         if (payload == null || payload.trim().isEmpty()) {
@@ -108,16 +103,6 @@ public final class AndroidSyncplayBridge {
             JSONObject obj = new JSONObject(payload);
             if (obj.has("State")) {
                 JSONObject st = obj.getJSONObject("State");
-                // V71/V72 CHAT-SPAM + YANK FIX: MPV mode mein JS ka apna State
-                // message wire par BILKUL na jaye (playstate AUR ignoringOnTheFly
-                // dono). Pehle ignoring counter wire par rehta tha jo har 5s
-                // badhta raha aur server hamari Java ki sahi state suppress
-                // karta raha -> room position 0/15 par collapse -> bar bar
-                // rewind yank. Ab poora State drop: Java akela sachcha client
-                // hai; local intents announceLocal() se jate hain.
-                if (st.has("playstate") && this.socketClient.hasControllerMedia()) {
-                    return;
-                }
                 JSONObject ign = st.optJSONObject("ignoringOnTheFly");
                 if (ign != null && ign.has("client")) {
                     this.socketClient.noteOutboundClientIgnore(ign.optLong("client", 0));
