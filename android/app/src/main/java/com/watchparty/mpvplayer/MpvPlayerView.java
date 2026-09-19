@@ -172,6 +172,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
      */
     private void dispatchState() {
         if (this.jsEmitter == null) return;
+        // V77 WEB-SAFE: jab mpv mein koi file loaded nahi (web player mode),
+        // mpv-state dispatch BAND -- warna 10Hz position=0 events web ka timer
+        // aur seek state corrupt karte hain ("web pe seek se zero").
+        if (!this.hasMedia()) return;
         double out = this.dispPos < 0 ? 0.0 : this.dispPos;
         if (!this.dispPaused && this.coreReady) {
             long age = android.os.SystemClock.elapsedRealtime() - this.dispAtMs;
