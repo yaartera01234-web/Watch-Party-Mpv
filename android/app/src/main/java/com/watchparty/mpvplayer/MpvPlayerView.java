@@ -81,6 +81,21 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 Boolean buf = mpv.getPropertyBoolean("paused-for-cache");
                 MpvPlayerView.this.buffering = (buf != null && buf);
 
+                // CACHE METER: kitna ahead load hua (seconds + MB) -- 200MB cap ki
+                // live tasdeeq ke liye.
+                double cSec = -1.0, cMB = -1.0;
+                try {
+                    Double ct = mpv.getPropertyDouble("demuxer-cache-time");
+                    if (ct != null && pos != null) cSec = ct - pos;
+                } catch (Throwable ignored) {}
+                try {
+                    MPVNode st = mpv.getPropertyNode("demuxer-cache-state");
+                    if (st != null && st.get("fw-bytes") != null)
+                        cMB = st.get("fw-bytes").asInt() / 1048576.0;
+                } catch (Throwable ignored) {}
+                MpvPlayerView.this.hudCacheSec = cSec;
+                MpvPlayerView.this.hudCacheMB = cMB;
+
                 // ---- DEBUG HUD measurement ----
                 long nowMs = android.os.SystemClock.elapsedRealtime();
                 long gap = (lastPollAt == 0L) ? 0L : (nowMs - lastPollAt);
@@ -204,10 +219,11 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             this.mpv.setOptionString("video-sync", "audio");
             // 200MB BUFFER CACHE: desktop Syncplay ki tarah demuxer ko 200MiB tak
             // ahead readahead rakhne do taake slow network par playback ruke nahi.
-            // (Pehle 64MB tha -- user ne desktop wala 200MB maanga.)
+            // readahead-secs itna bara ke sirf 200MB cap hi limit kare (60s rakha
+            // tha to high bitrate par waqt ki limit pehle aa jati thi).
             this.mpv.setOptionString("demuxer-max-bytes", "209715200");
             this.mpv.setOptionString("demuxer-max-back-bytes", "67108864");
-            this.mpv.setOptionString("demuxer-readahead-secs", "60");
+            this.mpv.setOptionString("demuxer-readahead-secs", "600");
             this.mpv.setOptionString("keep-open", "yes");
             this.mpv.setOptionString("input-default-bindings", "no");
             this.mpv.setOptionString("volume-max", "200");
@@ -374,6 +390,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
      */
     private long hudGap; private double hudPos; private double hudDelta;
     private boolean hudPaused; private boolean hudBuf;
+    private double hudCacheSec = -1.0; private double hudCacheMB = -1.0;
 
     private void updateDebugHud(long gap, double pos, double posDelta,
                                 boolean paused, boolean buffering) {
@@ -411,7 +428,14 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
               + "   badla x" + this.secondFlips + "   2s-jump x" + this.jump2s + "\n"
               + "paused=" + paused + "  buffering=" + buffering + "  polls=" + this.pollCount + "\n"
               + "seek x" + this.seekCount + " (" + this.lastSeekInfo + "s)"
-              + "  ff x" + this.ffCount + "  rw x" + this.rwCount + "  act=" + this.lastAct;
+              + "  ff x" + this.ffCount + "  rw x" + this.rwCount + "  act=" + this.lastAct + "\n"
+              + (this.hudCacheSec >= 0
+                    ? "cache=+" + String.format(java.util.Locale.US, "%.0f", this.hudCacheSec) + "s"
+                    : "cache=-")
+              + (this.hudCacheMB >= 0
+                    ? " (" + String.format(java.util.Locale.US, "%.0f", this.hudCacheMB) + "MB)"
+                    : "")
+              + " / 200MB cap";
             this.debugHud.setText(s);
             this.debugHud.bringToFront();
         } catch (Throwable ignored) {
