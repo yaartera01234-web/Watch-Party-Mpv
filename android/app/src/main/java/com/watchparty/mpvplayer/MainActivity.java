@@ -183,6 +183,9 @@ public class MainActivity extends BridgeActivity {
                 }
             } catch (Exception ignored) {}
         }, 600);
+        // V84: Java-side re-apply retries (JS rect aa chuka ho to pakka lage)
+        this.ui.postDelayed(() -> this.applySlotRect(), 1400);
+        this.ui.postDelayed(() -> this.applySlotRect(), 2400);
         try {
             String sz = size > 0 ? String.format(java.util.Locale.US, " (%.1f MB)", size / 1048576.0) : "";
             String msg = "\uD83D\uDCC1 Local file: " + name + sz + " -- same file hai to \uD83D\uDCC1 button se load karo";
@@ -282,6 +285,25 @@ public class MainActivity extends BridgeActivity {
         lp.leftMargin = Math.max(0, x);
         lp.topMargin = Math.max(0, y);
         this.mpvPlayerView.setLayoutParams(lp);
+
+        // V84 DIAG: agar debug banner live hai to applied values + view ka
+        // asli on-screen position report karo (screenshot se exact truth).
+        try {
+            final int fx = x, fy = y, fw = w, fh = h;
+            final WebView wv = getBridge() == null ? null : getBridge().getWebView();
+            if (wv != null) {
+                wv.evaluateJavascript("(function(){var d=document.getElementById('wpdbg');if(d)d.textContent=d.textContent+' | JAVA[" + fx + "," + fy + "," + fw + "," + fh + "]';})();", null);
+                final View vv = this.mpvPlayerView;
+                wv.postDelayed(() -> {
+                    try {
+                        int[] pos = new int[2];
+                        vv.getLocationOnScreen(pos);
+                        final int vx = pos[0], vy = pos[1];
+                        wv.evaluateJavascript("(function(){var d=document.getElementById('wpdbg');if(d)d.textContent=d.textContent+' | VIEW@" + vx + "," + vy;})();", null);
+                    } catch (Exception ignored) {}
+                }, 900);
+            }
+        } catch (Exception ignored) {}
     }
 
     public void dispatchSyncplayEvent(final String event, final String payload) {
