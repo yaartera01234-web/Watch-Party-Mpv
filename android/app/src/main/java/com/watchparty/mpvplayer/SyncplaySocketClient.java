@@ -31,6 +31,20 @@ public class SyncplaySocketClient {
     public static final double SLOWDOWN_RESET_THRESHOLD = 0.1;
     public static final double SLOWDOWN_RATE = 0.95;
 
+    /**
+     * SLOW-PEER PRIORITY.
+     *
+     * Syncplay server (server.py Room.getPosition) picks min(watchers) -- i.e. the room
+     * position IS the slowest watcher's position. So "diff = localPos - roomPosition"
+     * is literally "how far ahead am I of the slowest peer in the room".
+     *
+     * Policy: a peer that is BEHIND is never yanked forward (that only re-triggers
+     * buffering on a weak connection). Instead the peer that is AHEAD throttles to
+     * SLOWDOWN_RATE until the room converges. Seeking a behind peer forward is a last
+     * resort, used only past BEHIND_HARD_SEEK_THRESHOLD.
+     */
+    public static final double BEHIND_HARD_SEEK_THRESHOLD = 4.0;
+
     public static final String SYNCPLAY_LEGACY_VERSION = "1.2.255";
     public static final String SYNCPLAY_PROTOCOL_VERSION = "1.7.5";
 
@@ -276,24 +290,48 @@ public class SyncplaySocketClient {
                                 pc.executeSeek(roomPosition);
                             }
                             notifySyncAction("rewind", setBy, roomPosition, paused);
-                        } else if (diff < -FASTFORWARD_THRESHOLD && !doSeek) {
-                            // Local client is behind by > 5s (fast-forward)
+                        } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek) {
+                            // SLOW-PEER PRIORITY: local client is behind the slowest room
+                            // position by more than 4s. At this point the gap is too wide to
+                            // close by speed alone, so a seek is the last resort. Anything
+                            // smaller is handled by slowing the FAST peers down instead of
+                            // yanking this (weak-connection) peer forward.
                             if (pc != null && pc.hasMedia()) {
                                 pc.executeSeek(roomPosition + FASTFORWARD_EXTRA_TIME);
                             }
+                            if (this.speedChanged) {
+                                if (pc != null) pc.executeSpeed(1.0);
+                                this.speedChanged = false;
+                            }
                             notifySyncAction("fast-forward", setBy, roomPosition + FASTFORWARD_EXTRA_TIME, paused);
                         } else if (!paused && !doSeek) {
-                            // Subtle catch-up via playback speed adjustment
+                            // Subtle catch-up via playback speed adjustment.
+                            //
+                            // SLOW-PEER PRIORITY: roomPosition is the SLOWEST watcher's position
+                            // (server.py Room.getPosition -> min(watchers)). So a positive diff
+                            // means "I am ahead of the slowest peer" -> throttle myself to 0.95x
+                            // so the room converges on the slow peer, instead of the slow peer
+                            // being forced to skip forward and re-buffer.
                             if (diff > SLOWDOWN_THRESHOLD && !this.speedChanged) {
                                 if (pc != null && pc.hasMedia()) {
                                     pc.executeSpeed(SLOWDOWN_RATE);
                                     this.speedChanged = true;
                                 }
-                            } else if (this.speedChanged && diff < SLOWDOWN_RESET_THRESHOLD) {
+                                notifySyncAction("slowdown", setBy, roomPosition, paused);
+                            } else if (this.speedChanged && Math.abs(diff) < SLOWDOWN_RESET_THRESHOLD) {
+                                // Converged (within 0.1s) -> back to normal speed.
                                 if (pc != null && pc.hasMedia()) {
                                     pc.executeSpeed(1.0);
                                     this.speedChanged = false;
                                 }
+                                notifySyncAction("speed-reset", setBy, roomPosition, paused);
+                            } else if (this.speedChanged && diff < 0) {
+                                // We are the slow peer now -- never stay throttled while behind.
+                                if (pc != null && pc.hasMedia()) {
+                                    pc.executeSpeed(1.0);
+                                    this.speedChanged = false;
+                                }
+                                notifySyncAction("speed-reset", setBy, roomPosition, paused);
                             }
                         }
                     }

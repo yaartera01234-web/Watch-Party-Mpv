@@ -23,6 +23,12 @@ interface ChatPanelProps {
   onSendMessage: (text: string, replyTo?: { name: string; text: string } | null) => void;
   onTyping: () => void;
   onToggleSound: () => void;
+  /** READINESS GATE: gate khula hai (sab ke buffer hone ka intezaar) */
+  waitingForReady?: boolean;
+  /** Apni ready state */
+  isSelfReady?: boolean;
+  /** Manual "main tayyar hoon" toggle */
+  onToggleReady?: () => void;
 }
 
 interface SwipeableMessageProps {
@@ -235,6 +241,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onSendMessage,
   onTyping,
   onToggleSound,
+  waitingForReady = false,
+  isSelfReady = false,
+  onToggleReady,
 }) => {
   const [inputText, setInputText] = useState('');
   const [replyTarget, setReplyTarget] = useState<{ name: string; text: string } | null>(null);
@@ -377,9 +386,45 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <span className="truncate max-w-[80px] font-medium text-[11px]">
                 {m.name} {m.id === currentUserId && '(You)'}
               </span>
+              {/* READINESS dot: 🟢 tayyar · 🟡 load ho raha */}
+              {m.isReady !== undefined && (
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    m.isReady ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                  }`}
+                  title={m.isReady ? 'Tayyar' : 'Load ho raha hai...'}
+                />
+              )}
             </div>
           ))}
         </div>
+
+        {/* READINESS GATE banner — kis ka intezaar hai + manual ready button */}
+        {waitingForReady && (
+          <div className="mt-1.5 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+            <span className="text-[11px] text-amber-200 truncate">
+              ⏳ Sab ke tayyar hone ka intezaar...
+              {(() => {
+                const pending = members.filter((m) => m.isReady !== true).map((m) => m.name);
+                return pending.length ? ` (${pending.join(', ')})` : '';
+              })()}
+            </span>
+            {onToggleReady && (
+              <button
+                type="button"
+                id="ready-toggle-btn"
+                onClick={onToggleReady}
+                className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-md border transition active:scale-95 ${
+                  isSelfReady
+                    ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                    : 'bg-amber-500/20 border-amber-400/40 text-amber-200'
+                }`}
+              >
+                {isSelfReady ? '✅ Ready' : 'Main tayyar hoon'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Messages list */}

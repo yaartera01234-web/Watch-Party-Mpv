@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Watch Party & MPV Player</title>
     <meta name="description" content="Real-time synced Watch Party with built-in in-app MPV Player engine, hardware acceleration, gesture controls, and swipe-to-reply chat." />
     <meta name="theme-color" content="#0b0a16" />
@@ -18,6 +18,116 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <script src="https://www.youtube.com/iframe_api"></script>
+
+<style>
+    html, body {
+      width: 100vw !important;
+      height: 100vh !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      background-color: transparent !important;
+      overflow-x: hidden;
+    }
+    #root {
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+  
+  /* === WATCHPARTY PREMIUM MIDNIGHT-PURPLE GLASS THEME === */
+  #app-navbar {
+    background: linear-gradient(135deg, rgba(26, 18, 48, 0.94) 0%, rgba(16, 11, 32, 0.96) 100%) !important;
+    border-bottom: 1px solid rgba(168, 85, 247, 0.3) !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.08) inset !important;
+    backdrop-filter: blur(24px) !important;
+  }
+  #url-input-bar {
+    background: linear-gradient(135deg, rgba(28, 20, 52, 0.88) 0%, rgba(16, 11, 33, 0.92) 100%) !important;
+    border: 1px solid rgba(168, 85, 247, 0.35) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(168, 85, 247, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(20px) !important;
+  }
+  #media-url-input {
+    background: rgba(9, 6, 20, 0.75) !important;
+    border: 1px solid rgba(168, 85, 247, 0.3) !important;
+    color: #f8fafc !important;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+    transition: all 0.25s ease !important;
+  }
+  #media-url-input:focus {
+    border-color: #ec4899 !important;
+    box-shadow: 0 0 16px rgba(236, 72, 153, 0.35), inset 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+  }
+  #load-media-btn {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  }
+  #load-media-btn:hover {
+    background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6) !important;
+  }
+  #queue-media-btn {
+    background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%) !important;
+    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  }
+  #queue-media-btn:hover {
+    background: linear-gradient(135deg, #f472b6 0%, #a78bfa 100%) !important;
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6) !important;
+  }
+  #open-mpv-quick-trigger {
+    background: rgba(168, 85, 247, 0.15) !important;
+    border: 1px solid rgba(168, 85, 247, 0.4) !important;
+    color: #e879f9 !important;
+    box-shadow: 0 0 15px rgba(168, 85, 247, 0.2) !important;
+  }
+  #playlist-queue-container {
+    background: linear-gradient(180deg, rgba(22, 16, 45, 0.88) 0%, rgba(13, 9, 27, 0.95) 100%) !important;
+    border: 1px solid rgba(168, 85, 247, 0.28) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(168, 85, 247, 0.1) !important;
+  }
+  #live-chat-panel {
+    background: linear-gradient(180deg, rgba(20, 14, 42, 0.92) 0%, rgba(11, 8, 24, 0.98) 100%) !important;
+    border: 1px solid rgba(168, 85, 247, 0.3) !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 25px rgba(168, 85, 247, 0.12) !important;
+  }
+
+  </style>
+<script>
+    (function() {
+      function submitChatIfActive() {
+        var inp = document.getElementById('chat-message-input');
+        var btn = document.getElementById('chat-send-btn');
+        if (inp && (document.activeElement === inp || (inp.value && inp.value.trim().length > 0)) && btn) {
+          btn.click();
+          return true;
+        }
+        return false;
+      }
+
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+          if (submitChatIfActive()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      }, true);
+
+      window.addEventListener('beforeinput', function(e) {
+        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+          if (submitChatIfActive()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      }, true);
+    })();
+  </script>
   </head>
   <body class="bg-[#0b0a16] text-white antialiased overflow-x-hidden">
     <div id="root"></div>
