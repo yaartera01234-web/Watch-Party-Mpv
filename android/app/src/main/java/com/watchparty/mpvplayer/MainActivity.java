@@ -299,7 +299,7 @@ public class MainActivity extends BridgeActivity {
                         int[] pos = new int[2];
                         vv.getLocationOnScreen(pos);
                         final int vx = pos[0], vy = pos[1];
-                        wv.evaluateJavascript("(function(){var d=document.getElementById('wpdbg');if(d)d.textContent=d.textContent+' | VIEW@" + vx + "," + vy;})();", null);
+                        wv.evaluateJavascript("(function(){var d=document.getElementById('wpdbg');if(d)d.textContent=d.textContent+' | VIEW@" + vx + "," + vy + "';})();", null);
                     } catch (Exception ignored) {}
                 }, 900);
             }
