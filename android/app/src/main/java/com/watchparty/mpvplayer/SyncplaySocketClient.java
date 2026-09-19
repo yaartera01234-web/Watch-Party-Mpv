@@ -324,17 +324,18 @@ public class SyncplaySocketClient {
                                 notifySyncAction("speed-reset", setBy, roomPosition, paused);
                             }
                         } else if (diff > REWIND_THRESHOLD && !doSeek && !paused) {
-                            // PAUSE-SAFE: room paused hone par position by definition
-                            // frozen hai -- autonomous seek sirf flapping paida karega.
-                            // Local client is ahead by > 4s (rewind)
+                            // V74 NO-YANK: autonomous BACKWARD seek sarasar KHATAM.
+                            // Ye branch hi "video zero pe wapas" ka aakhri zariya
+                            // tha -- jab bhi room-position kisi stale/garbage state
+                            // (0/15) par hoti, hum khud ko wahan seek kar lete.
+                            // Slow-peer priority ke usool se bhi khud ko peeche
+                            // kheenchna hamesha galat tha. Ab hum aagay hon to
+                            // sirf speed reset hoti hai; seek sirf dost ke EXPLICIT
+                            // doSeek par.
                             if (this.speedChanged) {
                                 if (pc != null) pc.executeSpeed(1.0);
                                 this.speedChanged = false;
                             }
-                            if (pc != null && pc.hasMedia()) {
-                                pc.executeSeek(roomPosition);
-                            }
-                            notifySyncAction("rewind", setBy, roomPosition, paused);
                         } else if (diff < -BEHIND_HARD_SEEK_THRESHOLD && !doSeek && !paused) {
                             // YUROYAMI RULE (SyncDecision.kt): "In a normal room everyone can
                             // control, so the room follows its slowest member instead."
