@@ -349,6 +349,10 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
             this.pendingAudioUrl = null;
             loadNow(v, a);
         }
+        if (this.pendingLocalUri != null && this.coreReady && this.surfaceReady) {
+            android.net.Uri u = this.pendingLocalUri;
+            loadLocalNow(u);
+        }
     }
 
     private void startPolling() {
@@ -422,28 +426,59 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
     }
 
     /**
-     * V80 LOCAL FILE: SAF uri ko fd:// ke zariye mpv mein load karo.
-     * mpv isi process mein hai is liye raw fd chal jata hai. Purana fd
-     * 3s baad close hota hai taake mpv ka unload safe ho.
+     * V80/V81 LOCAL FILE: SAF uri ko mpv mein load karo.
+     *
+     * V81 FIX (yuroyami/syncplay-mobile MpvFileUtils se seekha):
+     *  - open() jaisa hi PENDING pattern: core/surface ready na hon to uri
+     *    queue ho jati hai, flushPending() ready hote hi load karti hai
+     *    (pehle coreReady=false par chup-chaap return ho jata tha =
+     *    "file select hoti hai magar app mein nahi ati").
+     *  - content:// ko yuroyami style resolve karo: pehle /proc/self/fd se
+     *    ASLI path dhoondo (mpv seedha path khele); warna detachFd kar ke
+     *    "fdclose://N" (mpv fd khud close karta hai -- leak nahi).
      */
-    private android.os.ParcelFileDescriptor localPfd;
+    private android.net.Uri pendingLocalUri;
 
     public void openLocal(android.net.Uri uri) {
+        setVisibility(View.VISIBLE);
+        ensureCore();
+        this.pendingLocalUri = uri;
+        if (this.coreReady && this.surfaceReady) {
+            loadLocalNow(uri);
+        }
+    }
+
+    private void loadLocalNow(android.net.Uri uri) {
         try {
-            if (!this.coreReady || this.mpv == null) return;
-            android.os.ParcelFileDescriptor pfd =
-                    getContext().getContentResolver().openFileDescriptor(uri, "r");
-            if (pfd == null) return;
-            int fd = pfd.getFd();
-            this.mpv.command(new String[]{"loadfile", "fd://" + fd, "replace"});
-            final android.os.ParcelFileDescriptor old = this.localPfd;
-            this.localPfd = pfd;
-            if (old != null) {
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                        () -> { try { old.close(); } catch (Throwable ignored) {} }, 3000);
+            this.pendingLocalUri = null;
+            String target = null;
+            if ("file".equals(uri.getScheme())) {
+                target = uri.getPath();
+            } else {
+                android.os.ParcelFileDescriptor pfd =
+                        getContext().getContentResolver().openFileDescriptor(uri, "r");
+                if (pfd != null) {
+                    try {
+                        String rp = new java.io.File("/proc/self/fd/" + pfd.getFd()).getCanonicalPath();
+                        if (!rp.startsWith("/proc") && new java.io.File(rp).canRead()) {
+                            target = rp;
+                        }
+                    } catch (Throwable ignored) {}
+                    if (target != null) {
+                        try { pfd.close(); } catch (Throwable ignored) {}
+                    } else {
+                        target = "fdclose://" + pfd.detachFd();
+                    }
+                }
             }
+            if (target == null || this.mpv == null) return;
+            this.mpv.command(new String[]{"loadfile", target, "replace"});
+            this.mpv.setPropertyString("vid", "auto");
+            this.mpv.setPropertyString("aid", "auto");
+            this.mpv.setPropertyBoolean("mute", false);
+            Log.i(TAG, "local loadfile started: " + target);
         } catch (Throwable t) {
-            Log.e(TAG, "openLocal failed", t);
+            Log.e(TAG, "loadLocal failed", t);
         }
     }
 
