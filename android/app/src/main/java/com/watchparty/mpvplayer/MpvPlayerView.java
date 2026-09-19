@@ -113,7 +113,7 @@ public class MpvPlayerView extends FrameLayout implements SurfaceHolder.Callback
                 }
                 lastShownSecond = shownSec;
                 double posDelta = (lastPollPos < 0) ? 0.0 : (dpos - lastPollPos);
-                if (posDelta < -0.05) this.rawBack++;
+                if (posDelta < -0.05) MpvPlayerView.this.rawBack++;
                 lastPollPos = dpos;
                 updateDebugHud(gap, dpos, posDelta, dpaused, (buf != null && buf));
 
