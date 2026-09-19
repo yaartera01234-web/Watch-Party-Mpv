@@ -142,6 +142,9 @@ public class MainActivity extends BridgeActivity {
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             }
             settings.setDomStorageEnabled(true);
+            // STALE-CACHE KHATMA: WebView HTTP cache bilkul band -- har load par
+            // taaza assets. (Service worker bhi self-destruct kar diya gaya hai.)
+            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
             settings.setDatabaseEnabled(true);
             settings.setAllowFileAccess(true);
             settings.setAllowContentAccess(true);
