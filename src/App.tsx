@@ -972,7 +972,9 @@ export default function App() {
                 </div>
               </div>
 
-              <VideoPlayer
+              {/* EDGE-TO-EDGE PLAYER - corner to corner fit */}
+              <div className="w-full -mx-2 sm:mx-0 sm:rounded-xl overflow-hidden bg-black">
+                <VideoPlayer
                 currentMedia={currentMedia}
                 isPlaying={isPlaying}
                 currentTime={currentTime}
@@ -1003,6 +1005,7 @@ export default function App() {
                 onSendReaction={handleSendReaction}
                 roomName={roomName}
               />
+              </div>
 
               <PlaylistQueue
                 items={queue}

@@ -193,14 +193,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setNativeBypass(false);
   }, [currentMedia?.url, currentMedia?.videoId]);
 
-  // Native MPV events -> loading/error states (App mpv-state/mpv-ended khud sambhalti hai)
+  // Native MPV events -> loading/error states - PURE MPV ONLY, no Web fallback
   useEffect(() => {
     const onResolving = () => setVideoLoading(true);
     const onLoaded = () => setVideoLoading(false);
     const onFailed = () => {
       setVideoLoading(false);
-      setNativeBypass(true); // native fail -> web player pe fallback
-      triggerOsd('Native MPV fail — web player se koshish...');
+      // Pure MPV only - never fallback to Web, keep native slot active
+      triggerOsd('Native MPV retry ho raha hai...');
     };
     window.addEventListener('mpv-resolving', onResolving);
     window.addEventListener('mpv-resolved', onLoaded);
@@ -1130,7 +1130,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Render MP3 player when media is audio
   if (mediaType === 'mp3') {
     return (
-      <div className="relative w-full aspect-video max-h-[65vh] rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10">
+      <div className="relative w-full aspect-video bg-black overflow-hidden rounded-none border-0 shadow-none m-0">
         <AudioPlayer
           title={mediaTitle}
           isPlaying={isPlaying}
@@ -1166,7 +1166,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="relative w-full aspect-video max-h-[65vh] rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10 group select-none"
+      className="relative w-full aspect-video bg-black overflow-hidden group select-none rounded-none border-0 shadow-none m-0"
+      style={{ width: '100%', margin: 0, padding: 0 }}
     >
       {/* Floating Reactions across video */}
       <FloatingReactions reactions={reactions} />
@@ -1775,25 +1776,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           type="button"
           id="mpv-fullscreen-btn"
           onClick={toggleNativeFullscreen}
-          className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-purple-600/80 hover:bg-purple-500 border border-purple-400/50 px-3 py-1.5 rounded-lg active:scale-95 transition"
+          className="flex items-center gap-2 text-[12px] font-bold text-white bg-[#c026d3] hover:bg-[#a21caf] border border-fuchsia-400/50 px-5 py-2 rounded-xl active:scale-95 transition shadow-lg shadow-fuchsia-900/30"
           title="Poori screen pe khelein (wapis ke liye phone ka Back dabayen)"
         >
           ⛶ Fullscreen
         </button>
-        <button
-          type="button"
-          id="mpv-web-switch-btn"
-          onClick={() => {
-            try { nativeBridge?.closeMpv(); } catch { /* ignore */ }
-            setNativeBypass(true);
-            triggerOsd('[web] Web player pe switch');
-          }}
-          className="flex items-center gap-1.5 text-[11px] font-bold text-white/80 bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-1.5 rounded-lg active:scale-95 transition"
-          title="Web player pe switch karein"
-        >
-          🔁 Web
-        </button>
-        <span className="text-[10px] text-white/40">tap video = play/pause</span>
       </div>
     )}
     </>
