@@ -972,8 +972,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* EDGE-TO-EDGE PLAYER - corner to corner fit */}
-              <div className="w-full -mx-2 sm:mx-0 sm:rounded-xl overflow-hidden bg-black">
+              {/* EDGE-TO-EDGE PLAYER - 100% corner to corner, no margins, pure MPV */}
+              <div className="w-[100vw] -mx-2 sm:-mx-4 sm:w-full sm:mx-0 overflow-hidden bg-black rounded-none border-0" style={{marginLeft: '-8px', marginRight: '-8px', width: 'calc(100% + 16px)'}}>
                 <VideoPlayer
                 currentMedia={currentMedia}
                 isPlaying={isPlaying}

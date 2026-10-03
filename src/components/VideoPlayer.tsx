@@ -125,8 +125,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return typeof w.AndroidMpvBridge?.openMpv === 'function' ? w.AndroidMpvBridge : null;
     } catch { return null; }
   })();
-  const [nativeBypass, setNativeBypass] = useState<boolean>(false); // user ne "Web player" maanga ya native fail
-  // NATIVE FULLSCREEN: mpv overlay poori screen pe (user ki report: fullscreen ka option hi nahi tha)
+  const [nativeBypass] = useState<boolean>(false); // REMOVED - pure MPV only, never bypass
+  // NATIVE FULLSCREEN: mpv overlay poori screen pe
   const [nativeFullscreen, setNativeFullscreen] = useState<boolean>(false);
   const nativeFullscreenRef = useRef<boolean>(false);
   const toggleNativeFullscreen = useCallback(() => {
@@ -136,7 +136,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, []);
   const nativeSlotRef = useRef<HTMLDivElement | null>(null);
   const mediaTypeNative: MediaType = currentMedia?.type || 'none';
-  const nativeActive = !!nativeBridge && mediaTypeNative !== 'none' && !nativeBypass;
+  const nativeActive = !!nativeBridge && mediaTypeNative !== 'none'; // PURE MPV ONLY - no Web fallback ever
 
   // Touch Gesture HUD Overlay State
   const [gestureType, setGestureType] = useState<'brightness' | 'volume' | 'seek' | null>(null);
@@ -188,10 +188,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 2200);
   }, []);
 
-  // Naye media pe web-fallback reset (nayi URL native ke paas dobara jayegi)
-  useEffect(() => {
-    setNativeBypass(false);
-  }, [currentMedia?.url, currentMedia?.videoId]);
+  // Naye media pe reset (pure MPV only)
 
   // Native MPV events -> loading/error states - PURE MPV ONLY, no Web fallback
   useEffect(() => {
